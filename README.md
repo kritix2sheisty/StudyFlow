@@ -26,7 +26,7 @@ The project is being developed in multiple phases, with the goal of eventually g
 * Consider assignment priority
 * Consider estimated workload (capped, so size never outranks a deadline)
 * Rank assignments using a weighted scoring system
-* Automated test suite pinning every prioritization promise (`tests/test_scheduler.py`)
+* Automated test suite: 13 scenarios plus every prioritization promise (`tests/test_scheduler.py`)
 
 #### How prioritization decides
 
@@ -41,7 +41,7 @@ small task its deadline.
 The score is a weighted blend, not an exact optimum:
 
 ```
-score = urgency × 5  +  priority × 3  +  min(hours, 5) × 1
+score = urgency × 5  +  priority × 3  +  min(hours, 5) × 0.5
 ```
 
 where urgency is `10 / days_left`. Overdue and due-today items are a separate
@@ -59,8 +59,8 @@ so that these promises hold, and each one has a test:
 6. From two days out, importance and size can pull a task ahead of one due a
    day or two sooner. A 10-hour high-priority exam prep due in four days
    starts before a 1-hour low-priority worksheet due in three.
-7. Up to four days out, a deadline still beats anything due much later. From
-   five days out, deadline pressure has faded and importance and size decide,
+7. Up to five days out, a deadline still beats anything due much later. From
+   six days out, deadline pressure has faded and importance and size decide,
    so a big high-priority project due next term outranks a small low-priority
    worksheet due in a month.
 
