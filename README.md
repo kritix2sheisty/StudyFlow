@@ -67,14 +67,53 @@ so that these promises hold, and each one has a test:
 The full rationale, including the alternatives that were rejected, is in the
 module docstring of `scheduler.py`.
 
+### Phase 3 — Schedule Generation (in progress)
+
+* Turn recurring weekly study slots into concrete, dated study blocks
+* Place work on or before its due date, never after
+* Fill by earliest deadline first, with the Phase 2 ranking breaking ties
+* Split large assignments across several blocks and days
+* Insert breaks between study periods
+* Report any work that could not fit before its due date
+* Test suite for deadlines, allocation and break behaviour (`tests/test_schedule_builder.py`)
+
 ### Future Development
 
-* Phase 3: Generate study schedules from available time slots
 * Detect scheduling conflicts
-* Distribute large assignments across multiple study sessions
-* Improve schedule optimization
+* Improve schedule optimization (spread work evenly, cap hours per day)
 * Add a graphical/web interface
 * Introduce AI-assisted study recommendations
+
+## Scheduling Algorithm
+
+StudyFlow currently uses a **greedy, deadline-aware** scheduling approach.
+
+1. Remove completed assignments.
+2. Prioritize the remaining assignments using the Phase 2 scoring system.
+3. Generate concrete study blocks from the student's recurring time slots.
+4. Re-order the assignments by due date, earliest first, using the Phase 2
+   ranking to break ties.
+5. Assign each assignment's work to the earliest available blocks on or
+   before its due date, splitting it across blocks when necessary.
+6. Insert a break between study periods that share a block.
+7. Record any work that could not be scheduled before its due date.
+
+Greedy means each placement is decided once and never revisited. This approach
+was chosen because it is simple, predictable, and computationally efficient.
+It does not guarantee the mathematically optimal schedule.
+
+**Why earliest deadline first?** The Phase 2 ranking answers "what should I
+work on next?" and blends urgency, importance and size. Placing hours in that
+order can let a large, important task due later swallow the time a small task
+due sooner needed. Ordering placement by deadline instead is a classical
+result: when work can be split, it meets every deadline whenever any order
+can. Phase 2 still decides among assignments that share a due date.
+
+**Known limitations.** Work is front-loaded into the earliest blocks rather
+than spread evenly across the days before a deadline. Breaks can leave a few
+minutes unused. There is no cap on hours per day and no preference for
+variety. Future versions may explore more advanced scheduling and
+optimization techniques once StudyFlow defines what "better" means.
 
 ## Running the tests
 
