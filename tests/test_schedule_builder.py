@@ -179,6 +179,28 @@ def test_work_is_never_scheduled_after_its_due_date():
     assert result.unscheduled == [(assignments[0], 4.0)]
 
 
+def test_build_schedule_respects_the_deadline_rule():
+    """
+    The integration test for _can_schedule_on. The unit tests prove
+    the helper classifies dates correctly; this proves build_schedule
+    actually obeys it. Physics is due Tuesday, with 1-hour slots
+    Monday to Wednesday: Monday and Tuesday get Physics, Wednesday
+    must not.
+
+    Physics needs 3 hours, not the 2 in the brief. With 2 hours the
+    work fits before the deadline and Wednesday is never reached, so
+    the test would pass even with the rule switched off. With 3, the
+    third hour is exactly what the rule has to refuse.
+    """
+    slots = [slot(d, 16, 17) for d in (Weekday.MONDAY, Weekday.TUESDAY, Weekday.WEDNESDAY)]
+    assignments = [task("Physics", TUESDAY, 3)]
+    result = build_schedule(assignments, slots, today=MONDAY)
+    assert labels(result, MONDAY) == ["Physics"]
+    assert labels(result, TUESDAY) == ["Physics"]
+    assert "Physics" not in labels(result, WEDNESDAY)
+    assert result.unscheduled == [(assignments[0], 1.0)]
+
+
 def test_physics_lab_due_tuesday_recognises_wednesday_is_too_late():
     """
     The Phase 3.1 example. Physics Lab is due Tuesday and needs 3
