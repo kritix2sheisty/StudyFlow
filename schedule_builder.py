@@ -160,6 +160,22 @@ def _placement_order(assignments: List[Assignment], today: date) -> List[Assignm
     return sorted(ranked, key=lambda a: max(a.due_date, today))
 
 
+def _can_schedule_on(assignment: Assignment, study_date: date) -> bool:
+    """
+    The deadline rule: an assignment may only be scheduled in a study
+    period that falls on or before its due date.
+
+        Assignment due Monday
+        Sunday  -> True
+        Monday  -> True
+        Tuesday -> False
+
+    Dates only, no time of day: a due date is a whole day, so a study
+    period on the due date itself is allowed.
+    """
+    return study_date <= assignment.due_date
+
+
 def _last_eligible_date(assignment: Assignment, today: date) -> Optional[date]:
     """The latest date work may be placed on, or None for no limit."""
     if assignment.due_date < today:

@@ -10,8 +10,10 @@ and break behaviour at the edges of a slot.
 
 from datetime import date, timedelta
 
+import pytest
+
 from models import Assignment, Priority, TimeSlot, Weekday
-from schedule_builder import build_schedule, format_schedule
+from schedule_builder import _can_schedule_on, build_schedule, format_schedule
 
 MONDAY = date(2026, 8, 17)  # a known Monday, for deterministic weekday math
 TUESDAY = MONDAY + timedelta(days=1)
@@ -124,7 +126,44 @@ def test_empty_assignments_produces_empty_schedule():
 
 
 # =====================================================================
-# Part 2 — deadlines
+# Part 2 — the deadline rule (Phase 3.1)
+# =====================================================================
+#
+# The helper is tested on its own first, so the rule is proven before
+# it is wired into the scheduling loop.
+
+def test_can_schedule_before_deadline():
+    due_monday = task("Due Monday", MONDAY, 1)
+    sunday = MONDAY - timedelta(days=1)
+    assert _can_schedule_on(due_monday, sunday) is True
+
+
+def test_can_schedule_on_deadline():
+    due_monday = task("Due Monday", MONDAY, 1)
+    assert _can_schedule_on(due_monday, MONDAY) is True
+
+
+def test_cannot_schedule_after_deadline():
+    due_monday = task("Due Monday", MONDAY, 1)
+    assert _can_schedule_on(due_monday, TUESDAY) is False
+
+
+@pytest.mark.parametrize("offset,allowed", [
+    (0, True),    # Monday
+    (1, True),    # Tuesday
+    (2, True),    # Wednesday
+    (3, True),    # Thursday
+    (4, True),    # Friday, the due date itself
+    (5, False),   # Saturday
+    (6, False),   # Sunday
+])
+def test_assignment_due_friday_can_use_monday_through_friday_only(offset, allowed):
+    due_friday = task("Due Friday", FRIDAY, 1)
+    assert _can_schedule_on(due_friday, MONDAY + timedelta(days=offset)) is allowed
+
+
+# =====================================================================
+# Part 2 — deadlines in the schedule
 # =====================================================================
 
 def test_work_is_never_scheduled_after_its_due_date():
