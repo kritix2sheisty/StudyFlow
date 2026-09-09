@@ -179,17 +179,18 @@ def test_work_is_never_scheduled_after_its_due_date():
     assert result.unscheduled == [(assignments[0], 4.0)]
 
 
-def test_assignment_does_not_cross_its_deadline():
+def test_physics_lab_due_tuesday_recognises_wednesday_is_too_late():
     """
-    Due Tuesday, 3 hours, with 2-hour slots Monday to Wednesday. The
-    third hour must not spill onto Wednesday.
+    The Phase 3.1 example. Physics Lab is due Tuesday and needs 3
+    hours, with 2-hour slots Monday to Wednesday. The third hour must
+    not spill onto Wednesday: Wednesday is too late.
     """
     slots = [slot(d, 16, 18) for d in (Weekday.MONDAY, Weekday.TUESDAY, Weekday.WEDNESDAY)]
-    assignments = [task("Due Tuesday", TUESDAY, 3)]
+    assignments = [task("Physics Lab", TUESDAY, 3)]
     result = build_schedule(assignments, slots, today=MONDAY)
-    assert minutes_of(result, MONDAY, "Due Tuesday") == 120
-    assert minutes_of(result, TUESDAY, "Due Tuesday") == 60
-    assert "Due Tuesday" not in labels(result, WEDNESDAY)
+    assert minutes_of(result, MONDAY, "Physics Lab") == 120
+    assert minutes_of(result, TUESDAY, "Physics Lab") == 60
+    assert "Physics Lab" not in labels(result, WEDNESDAY)
     assert result.unscheduled == []
 
 
@@ -210,6 +211,21 @@ def test_work_short_of_its_deadline_is_partly_scheduled_and_rest_flagged():
     assert minutes_of(result, MONDAY, "Due Tuesday") == 120
     assert WEDNESDAY not in result.by_date
     assert result.unscheduled == [(assignments[0], 3.0)]
+
+
+def test_five_hours_due_friday_with_four_free_splits_and_flags_one_hour():
+    """
+    The Phase 3.1 complication. Due Friday, needs 5 hours; only
+    Thursday and Friday 4-6 PM are free. The scheduler splits it
+    2 + 2 and reports the missing hour, building on the existing
+    unscheduled report rather than inventing a new one.
+    """
+    slots = [slot(Weekday.THURSDAY, 16, 18), slot(Weekday.FRIDAY, 16, 18)]
+    assignments = [task("Due Friday", FRIDAY, 5)]
+    result = build_schedule(assignments, slots, today=MONDAY)
+    assert minutes_of(result, THURSDAY, "Due Friday") == 120
+    assert minutes_of(result, FRIDAY, "Due Friday") == 120
+    assert result.unscheduled == [(assignments[0], 1.0)]
 
 
 def test_overdue_work_is_scheduled_as_soon_as_possible():

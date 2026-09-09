@@ -176,13 +176,6 @@ def _can_schedule_on(assignment: Assignment, study_date: date) -> bool:
     return study_date <= assignment.due_date
 
 
-def _last_eligible_date(assignment: Assignment, today: date) -> Optional[date]:
-    """The latest date work may be placed on, or None for no limit."""
-    if assignment.due_date < today:
-        return None   # already overdue: as soon as possible, wherever that is
-    return assignment.due_date
-
-
 def _place(
     assignment: Assignment,
     blocks: List[_WorkBlock],
@@ -194,13 +187,16 @@ def _place(
     remaining = round(assignment.estimated_hours * 60)
     if remaining <= 0:
         return
-    last_date = _last_eligible_date(assignment, today)
+    # An assignment that is already overdue has no deadline left to
+    # respect: the best that can happen is finishing it as soon as
+    # possible, so every block is fair game for it.
+    overdue = assignment.due_date < today
 
     for block in blocks:
         if remaining <= 0:
             break
-        if last_date is not None and block.date > last_date:
-            break   # blocks are in date order; nothing later is eligible
+        if not overdue and not _can_schedule_on(assignment, block.date):
+            continue   # this study period is after the due date: skip it
         free = block.remaining
         if free <= 0:
             continue
