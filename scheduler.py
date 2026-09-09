@@ -36,9 +36,10 @@ weight without breaking a promise is easy to check.
      it now".
   3. Anything due tomorrow comes before anything due later, whatever
      its priority or size. (Tomorrow scores at least 53; the best a
-     two-days-out item can score is 25 + 9 + 5 = 39.)
-  4. On the same due date, higher priority wins no matter the size.
-     (Effort caps at 5 points; the LOW-to-HIGH priority gap is 6.)
+     two-days-out item can score is 25 + 9 + 2.5 = 36.5.)
+  4. On the same due date, higher priority wins no matter the size,
+     for every pair of priorities. (The whole effort term is worth at
+     most 2.5 points; one priority step is worth 3.)
   5. On the same due date and priority, the bigger task goes first,
      because it needs to be started sooner.
   6. From two days out, the blend takes over: importance and size can
@@ -47,10 +48,10 @@ weight without breaking a promise is easy to check.
      start before a 1-hour LOW worksheet due in three, because with
      two days of slack, what matters most is what would hurt to
      leave until the last day.
-  7. Up to four days out, a deadline still beats any combination of
+  7. Up to five days out, a deadline still beats any combination of
      importance and size in something due much later (urgency is
      worth 50 / days_left points; the most importance and size can
-     add together is 6 + 5 = 11, and 50 / 4 > 11). From five days
+     add together is 6 + 2.5 = 8.5, and 50 / 5 > 8.5). From six days
      out, deadline pressure has faded and importance and size decide.
      A HIGH 5-hour project due next term outranks a LOW 1-hour
      worksheet due in a month. Both are far away; the one worth
@@ -65,6 +66,11 @@ Rejected alternatives:
     outweigh a deadline: a 40-hour project due in five days outranked
     a 1-hour task due tomorrow, and a 20-hour LOW task beat a 1-hour
     HIGH task with the same due date. The cap fixes both.
+  - Effort weight 1.0 with a 5-hour cap (the first capped version).
+    The effort term could reach 5 points, more than the 3-point step
+    between adjacent priorities, so on the same due date a MEDIUM
+    5-hour task still beat a HIGH 0-hour task and a HIGH 1-hour task
+    tied with a MEDIUM 4-hour one. Halving the weight closed that.
   - Effort as hours-per-day-remaining (hours / days_left). More
     principled as a "pressure" measure, but it made big far-off tasks
     routinely jump ahead of small near ones, which is the opposite of
@@ -81,12 +87,12 @@ from models import Assignment
 # prioritize_assignments below.
 DUE_DATE_WEIGHT = 5.0
 PRIORITY_WEIGHT = 3.0
-EFFORT_WEIGHT = 1.0
+EFFORT_WEIGHT = 0.5
 
 # Effort stops counting beyond this many hours. Keeps a very large task
 # from outranking a nearer deadline or a higher priority: the maximum
-# effort contribution (5 * EFFORT_WEIGHT) stays below the LOW-to-HIGH
-# priority gap (2 * PRIORITY_WEIGHT).
+# effort contribution (EFFORT_CAP_HOURS * EFFORT_WEIGHT = 2.5) stays
+# below a single priority step (PRIORITY_WEIGHT = 3).
 EFFORT_CAP_HOURS = 5.0
 
 
