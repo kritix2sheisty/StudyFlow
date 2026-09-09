@@ -2,9 +2,73 @@
 scheduler.py
 Phase 2 — prioritization logic for StudyFlow.
 
-This does NOT build a full schedule yet (that's Phase 3, matching
-assignments to actual time slots). It answers a narrower question:
-"if I can only work on one thing next, what should it be?"
+This does NOT build a full schedule (that's Phase 3, in
+schedule_builder.py, which matches assignments to actual time slots).
+It answers a narrower question: "if I can only work on one thing next,
+what should it be?"
+
+=====================================================================
+StudyFlow's prioritization philosophy
+=====================================================================
+
+Deadlines come first. Importance second. Size is a nudge, never a veto.
+
+The reasoning: missing a deadline is the one outcome a scheduler must
+never cause, and the schedule builder works through this list in order
+anyway. Putting a small task that is due tomorrow ahead of a big task
+due next week costs the big task an hour or two of lead time; putting
+the big task first can cost the small one its deadline.
+
+The formula is a weighted blend (a heuristic, not an optimum):
+
+    score = urgency * DUE_DATE_WEIGHT
+          + priority * PRIORITY_WEIGHT
+          + min(hours, EFFORT_CAP_HOURS) * EFFORT_WEIGHT
+
+The weights and the effort cap are chosen so the following hold. Each
+one is pinned by a test in tests/test_scheduler.py, so changing a
+weight without breaking a promise is easy to check.
+
+  1. Completed assignments are never listed.
+  2. Anything overdue or due today comes before everything else.
+     Among those, priority decides, then size. How late something is
+     does not matter: a week late and a day late are both "late; do
+     it now".
+  3. Anything due tomorrow comes before anything due later, whatever
+     its priority or size. (Tomorrow scores at least 53; the best a
+     two-days-out item can score is 25 + 9 + 5 = 39.)
+  4. On the same due date, higher priority wins no matter the size.
+     (Effort caps at 5 points; the LOW-to-HIGH priority gap is 6.)
+  5. On the same due date and priority, the bigger task goes first,
+     because it needs to be started sooner.
+  6. From two days out, the blend takes over: importance and size can
+     pull a task ahead of one due a day or two sooner. This is
+     deliberate. A 10-hour HIGH exam prep due in four days should
+     start before a 1-hour LOW worksheet due in three, because with
+     two days of slack, what matters most is what would hurt to
+     leave until the last day.
+  7. Up to four days out, a deadline still beats any combination of
+     importance and size in something due much later (urgency is
+     worth 50 / days_left points; the most importance and size can
+     add together is 6 + 5 = 11, and 50 / 4 > 11). From five days
+     out, deadline pressure has faded and importance and size decide.
+     A HIGH 5-hour project due next term outranks a LOW 1-hour
+     worksheet due in a month. Both are far away; the one worth
+     starting early is the big important one.
+
+Rejected alternatives:
+  - Strict lexicographic sort (due date, then priority, then size).
+    Simplest to explain, but it lets a pile of low-priority busywork
+    due a day sooner push a large, important task out of the week
+    entirely when time is short.
+  - Uncapped effort (the original Phase 2 formula). Raw hours could
+    outweigh a deadline: a 40-hour project due in five days outranked
+    a 1-hour task due tomorrow, and a 20-hour LOW task beat a 1-hour
+    HIGH task with the same due date. The cap fixes both.
+  - Effort as hours-per-day-remaining (hours / days_left). More
+    principled as a "pressure" measure, but it made big far-off tasks
+    routinely jump ahead of small near ones, which is the opposite of
+    the philosophy above.
 """
 
 from datetime import date
@@ -12,12 +76,18 @@ from typing import List, Optional
 
 from models import Assignment
 
-# Tunable weights — how much each factor influences the final score,
-# among items that are not overdue (overdue items always sort first;
-# see prioritize_assignments below).
+# Tunable weights — how much each factor influences the final score.
+# Overdue items always sort first regardless of these; see
+# prioritize_assignments below.
 DUE_DATE_WEIGHT = 5.0
 PRIORITY_WEIGHT = 3.0
 EFFORT_WEIGHT = 1.0
+
+# Effort stops counting beyond this many hours. Keeps a very large task
+# from outranking a nearer deadline or a higher priority: the maximum
+# effort contribution (5 * EFFORT_WEIGHT) stays below the LOW-to-HIGH
+# priority gap (2 * PRIORITY_WEIGHT).
+EFFORT_CAP_HOURS = 5.0
 
 
 def _is_overdue(assignment: Assignment, today: date) -> bool:
@@ -27,7 +97,8 @@ def _is_overdue(assignment: Assignment, today: date) -> bool:
 def _urgency_score(assignment: Assignment, today: date) -> float:
     """
     Higher = more time pressure. Decays smoothly as the due date gets
-    further away. Only meaningful for non-overdue assignments — see
+    further away: 10 for tomorrow, 5 for two days out, 2 for five days
+    out, 1 for ten. Only meaningful for non-overdue assignments; see
     _is_overdue, which is checked separately and always wins first.
     """
     days_left = (assignment.due_date - today).days
@@ -41,18 +112,23 @@ def _priority_score(assignment: Assignment) -> float:
 
 def _effort_score(assignment: Assignment) -> float:
     """
-    Bigger tasks get a small boost. Rationale: a 10-hour assignment
-    due in 5 days needs to be started sooner than a 1-hour assignment
-    due in 5 days, even though their due dates are identical.
+    Bigger tasks get a small boost, capped at EFFORT_CAP_HOURS.
+
+    Rationale for the boost: a 10-hour assignment due in 5 days needs
+    to be started sooner than a 1-hour assignment due in 5 days, even
+    though their due dates are identical.
+
+    Rationale for the cap: beyond a few hours a task is simply "big",
+    and being big should never beat being due sooner or being more
+    important. Negative estimates are treated as zero.
     """
-    return assignment.estimated_hours
+    return min(max(assignment.estimated_hours, 0.0), EFFORT_CAP_HOURS)
 
 
 def prioritize_assignments(
     assignments: List[Assignment],
     today: Optional[date] = None,
 ) -> List[Assignment]:
-
     """
     Return assignments sorted from most to least urgent.
 
@@ -66,7 +142,11 @@ def prioritize_assignments(
          priority item can out-score a barely-overdue LOW priority
          one), so overdue status is checked as its own tier first.
       2. Within each tier, items are ranked by a weighted score
-         combining urgency, priority, and effort.
+         combining urgency, priority, and (capped) effort. See the
+         module docstring for what that score promises.
+
+    The sort is stable: assignments that score identically keep the
+    order they were given in.
 
     `today` defaults to date.today() but can be overridden, which is
     what makes this function easy to test (see tests/test_scheduler.py).
