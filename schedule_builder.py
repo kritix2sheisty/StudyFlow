@@ -3,32 +3,85 @@ schedule_builder.py
 Phase 3 — turns a prioritized assignment list + a set of recurring
 weekly time slots into an actual day-by-day, time-blocked schedule.
 
-This is a GREEDY algorithm: it doesn't search for the "best possible"
-arrangement, it just walks through assignments in priority order and
-stuffs each one into the earliest available time it can find. That's
-simple to reason about and fast to run, at the cost of not being
-provably optimal — a reasonable trade-off for a first version.
+=====================================================================
+The algorithm
+=====================================================================
 
-Design decisions locked in during Phase 3 planning:
-- An assignment bigger than any single slot gets SPLIT across
-  multiple slots/days rather than requiring one slot big enough.
-- A fixed-length BREAK is auto-inserted after each scheduled chunk,
-  as long as there's room left in that slot.
-- If there isn't enough total time this week for everything, the
-  schedule fills what it can (respecting priority order) and reports
-  the rest as unscheduled rather than shrinking estimates or
-  refusing to build a partial schedule.
+StudyFlow uses a GREEDY, DEADLINE-AWARE scheduler. Greedy means it
+never backtracks: each decision is made once, from what looks best at
+that moment, and is never revisited. That makes it simple to explain,
+fast to run, and predictable. It also means the result is not
+guaranteed to be the best possible schedule (see "Limitations").
+
+  1. Drop completed assignments and rank the rest with the Phase 2
+     scorer (scheduler.prioritize_assignments).
+  2. Expand the student's recurring weekly TimeSlots into concrete,
+     dated blocks for the next `days_ahead` days, in time order.
+  3. Re-order the ranked list by due date, earliest first, with the
+     Phase 2 rank breaking ties. This is earliest-deadline-first (EDF).
+  4. For each assignment in that order, walk the blocks in time order
+     and pour work into every block dated on or before its due date,
+     splitting across blocks as needed, until the assignment is fully
+     placed or no eligible time is left. Work already overdue has no
+     date limit: its deadline is gone, so it simply goes as early as
+     possible.
+  5. Between two chunks of work in the same block, insert a break of
+     `break_minutes`. A break is never shortened; if a full break plus
+     any work would not fit, the leftover minutes stay free.
+  6. Whatever could not be placed is reported as unscheduled, with the
+     hours left over, rather than shrinking estimates or refusing to
+     build a partial schedule.
+
+Why re-order by deadline when Phase 2 already ranked everything?
+Phase 2 answers "what should I work on next?", and for that a blend
+of urgency, importance and size is right. Phase 3 answers "which hour
+goes where?", and there a classical result applies: on a single
+resource where work can be split, placing tasks earliest-deadline-
+first meets every deadline whenever any order can. Filling in Phase 2
+order does not have that property. A 10-hour HIGH exam prep due
+Friday outranks a 1-hour LOW worksheet due Thursday (that is the
+prioritizer's promise 6), and if it is placed first it swallows
+Monday to Friday and the worksheet never gets its hour, even though
+one was trivially available. Phase 2 still decides the order among
+assignments that share a due date, and so which of them is cut when
+there is not enough time.
+
+Rules settled in the Phase 3 review:
+  - Work is never placed after its due date. A slot on the due date
+    itself is fine: due dates are whole days, not times.
+  - An assignment that needs more time than exists before its due
+    date gets whatever does exist and the rest is flagged.
+  - Overdue work is placed as early as possible with no date limit.
+  - A bigger-than-any-slot assignment is split across blocks and days.
+  - Breaks go only between two chunks of work in the same block, are
+    never shortened, and are never left dangling at the end of a day.
+
+Limitations (deliberate, for a first version):
+  - Greedy fills the earliest eligible block completely before moving
+    on, so work is front-loaded rather than spread evenly over the
+    days before a deadline. Three hours due Tuesday become two hours
+    Monday and one Tuesday, not ninety minutes each day.
+  - The EDF guarantee ignores breaks, so a set of assignments that
+    fits exactly can still lose a few minutes to a break and end up
+    with a small remainder flagged.
+  - There is no cap on hours per day and no preference for variety,
+    so a long block can be one subject end to end.
+  - "Optimal" is not defined yet. Once StudyFlow decides what a
+    better schedule means (fewer late hours? more even days? fewer
+    context switches?), a search or optimisation pass can replace the
+    greedy fill. Until then, greedy is the honest choice.
 """
 
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from models import Assignment, TimeSlot, Weekday
 from scheduler import prioritize_assignments
 
 DEFAULT_BREAK_MINUTES = 15
 DEFAULT_DAYS_AHEAD = 7
+BREAK_LABEL = "Break"
 
 
 @dataclass
@@ -36,10 +89,10 @@ class ScheduledBlock:
     """One entry on the final schedule: a chunk of time with a label."""
     start_minute: int   # minutes since midnight
     end_minute: int
-    label: str           # assignment name, or "Break"
+    label: str           # assignment name, or BREAK_LABEL
 
     def format_time_range(self) -> str:
-        return f"{_format_minutes(self.start_minute)}\u2013{_format_minutes(self.end_minute)}"
+        return f"{_format_minutes(self.start_minute)}–{_format_minutes(self.end_minute)}"
 
 
 @dataclass
@@ -57,8 +110,17 @@ class _WorkBlock:
     """
     def __init__(self, block_date: date, start_hour: int, end_hour: int):
         self.date = block_date
-        self.cursor = start_hour * 60      # minutes since midnight, moves forward as we fill
-        self.remaining = (end_hour - start_hour) * 60  # minutes still free
+        self.start = start_hour * 60   # minutes since midnight
+        self.end = end_hour * 60
+        self.cursor = self.start       # moves forward as the block fills
+
+    @property
+    def remaining(self) -> int:
+        return self.end - self.cursor
+
+    @property
+    def has_work(self) -> bool:
+        return self.cursor > self.start
 
 
 def _format_minutes(total_minutes: int) -> str:
@@ -83,88 +145,106 @@ def _generate_week_blocks(
         for slot in time_slots:
             if slot.weekday == current_weekday:
                 blocks.append(_WorkBlock(current_date, slot.start_hour, slot.end_hour))
-    blocks.sort(key=lambda b: (b.date, b.cursor))
+    blocks.sort(key=lambda b: (b.date, b.start))
     return blocks
+
+
+def _placement_order(assignments: List[Assignment], today: date) -> List[Assignment]:
+    """
+    Earliest due date first; the Phase 2 rank breaks ties. Overdue work
+    sorts with work due today, since its deadline is already here.
+    Python's sort is stable, so the Phase 2 order survives within a
+    due date.
+    """
+    ranked = prioritize_assignments(assignments, today=today)
+    return sorted(ranked, key=lambda a: max(a.due_date, today))
+
+
+def _last_eligible_date(assignment: Assignment, today: date) -> Optional[date]:
+    """The latest date work may be placed on, or None for no limit."""
+    if assignment.due_date < today:
+        return None   # already overdue: as soon as possible, wherever that is
+    return assignment.due_date
+
+
+def _place(
+    assignment: Assignment,
+    blocks: List[_WorkBlock],
+    today: date,
+    break_minutes: int,
+    result: ScheduleResult,
+) -> None:
+    """Pour one assignment into the eligible blocks, earliest first."""
+    remaining = round(assignment.estimated_hours * 60)
+    if remaining <= 0:
+        return
+    last_date = _last_eligible_date(assignment, today)
+
+    for block in blocks:
+        if remaining <= 0:
+            break
+        if last_date is not None and block.date > last_date:
+            break   # blocks are in date order; nothing later is eligible
+        free = block.remaining
+        if free <= 0:
+            continue
+
+        if block.has_work:
+            # A break separates this chunk from the previous one. If the
+            # full break would leave no room for work, skip the block.
+            if free <= break_minutes:
+                continue
+            _append(result, block, break_minutes, BREAK_LABEL)
+            free -= break_minutes
+
+        chunk = min(remaining, free)
+        _append(result, block, chunk, assignment.name)
+        remaining -= chunk
+
+    if remaining > 0:
+        result.unscheduled.append((assignment, remaining / 60))
+
+
+def _append(result: ScheduleResult, block: _WorkBlock, minutes: int, label: str) -> None:
+    start = block.cursor
+    end = start + minutes
+    result.by_date.setdefault(block.date, []).append(ScheduledBlock(start, end, label))
+    block.cursor = end
 
 
 def build_schedule(
     assignments: List[Assignment],
     time_slots: List[TimeSlot],
-    today: date = None,
+    today: Optional[date] = None,
     break_minutes: int = DEFAULT_BREAK_MINUTES,
     days_ahead: int = DEFAULT_DAYS_AHEAD,
 ) -> ScheduleResult:
     """
-    Greedily fill available time_slots with assignments, most urgent
-    first (via prioritize_assignments), splitting any assignment that
-    doesn't fit in one block and inserting a break after each chunk.
+    Build a deadline-aware schedule for the next `days_ahead` days.
 
-    Assignments that don't fit anywhere within `days_ahead` days end
-    up in result.unscheduled, along with how many hours were left over.
+    See the module docstring for the algorithm. Assignments that do
+    not fit on or before their due date end up in result.unscheduled,
+    along with how many hours were left over.
     """
     today = today or date.today()
-    ordered = prioritize_assignments(assignments, today=today)
     blocks = _generate_week_blocks(time_slots, today, days_ahead)
-
     result = ScheduleResult()
-    block_index = 0
 
-    for assignment in ordered:
-        remaining_minutes = round(assignment.estimated_hours * 60)
+    for assignment in _placement_order(assignments, today):
+        _place(assignment, blocks, today, break_minutes, result)
 
-        while remaining_minutes > 0 and block_index < len(blocks):
-            block = blocks[block_index]
-
-            if block.remaining <= 0:
-                block_index += 1
-                continue
-
-            chunk = min(remaining_minutes, block.remaining)
-            start = block.cursor
-            end = start + chunk
-            result.by_date.setdefault(block.date, []).append(
-                ScheduledBlock(start, end, assignment.name)
-            )
-            block.cursor = end
-            block.remaining -= chunk
-            remaining_minutes -= chunk
-
-            # Auto-insert a break if there's still room in this block,
-            # whether this assignment is finished or needs to continue.
-            if block.remaining > 0:
-                break_len = min(break_minutes, block.remaining)
-                b_start = block.cursor
-                b_end = b_start + break_len
-                result.by_date[block.date].append(
-                    ScheduledBlock(b_start, b_end, "Break")
-                )
-                block.cursor = b_end
-                block.remaining -= break_len
-
-            if block.remaining <= 0:
-                block_index += 1
-
-        if remaining_minutes > 0:
-            result.unscheduled.append((assignment, remaining_minutes / 60))
-
-    _trim_trailing_break(result)
+    _sort_days(result)
     return result
 
 
-def _trim_trailing_break(result: ScheduleResult) -> None:
+def _sort_days(result: ScheduleResult) -> None:
     """
-    If the very last entry in the whole schedule is a Break (nothing
-    ever gets scheduled after it, because we ran out of assignments),
-    drop it — a break with nothing after it is just noise.
+    Later assignments can fill leftover room in earlier blocks, so a
+    day's entries are not necessarily appended in time order when the
+    day has more than one slot. Sort each day by start time.
     """
-    if not result.by_date:
-        return
-    last_date = max(result.by_date)
-    day_blocks = result.by_date[last_date]
-    if day_blocks and day_blocks[-1].label == "Break":
-        day_blocks.pop()
-        if not day_blocks:
-            del result.by_date[last_date]
+    for blocks in result.by_date.values():
+        blocks.sort(key=lambda b: b.start_minute)
 
 
 def format_schedule(result: ScheduleResult) -> str:
@@ -177,8 +257,11 @@ def format_schedule(result: ScheduleResult) -> str:
         lines.append("")
 
     if result.unscheduled:
-        lines.append("Could not fit (ran out of available time):")
+        lines.append("Could not fit on or before the due date:")
         for assignment, hours_left in result.unscheduled:
-            lines.append(f"  - {assignment.name}: {hours_left:.2f}h unscheduled")
+            lines.append(
+                f"  - {assignment.name}: {hours_left:.2f}h unscheduled "
+                f"(due {assignment.due_date.isoformat()})"
+            )
 
     return "\n".join(lines).rstrip()
