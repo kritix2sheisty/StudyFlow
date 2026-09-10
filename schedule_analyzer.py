@@ -12,10 +12,15 @@ Hours everywhere are floats: 90 minutes is 1.5.
 """
 
 from dataclasses import dataclass
-from typing import Iterable, List
+from datetime import date
+from typing import Iterable, List, Optional
 
-from models import Assignment
+from models import Assignment, TimeSlot
 from schedule_builder import BREAK_LABEL, ScheduleResult
+
+_WIDTH = 32
+_RULE = "-" * _WIDTH
+_BANNER = "=" * _WIDTH
 
 # Assignment-level status. Plain strings rather than emoji so the CLI
 # report prints the same on every console.
@@ -205,22 +210,57 @@ def at_risk_assignments(
     ]
 
 
-def format_analysis(analyses: List[AssignmentAnalysis]) -> str:
+def format_analysis(
+    result: ScheduleResult,
+    assignments: Iterable[Assignment],
+    time_slots: Optional[Iterable[TimeSlot]] = None,
+    today: Optional[date] = None,
+) -> str:
     """
-    The per-assignment table:
+    Return a readable analysis of the generated study plan: the four
+    totals, then one entry per active assignment with its status,
+    scheduled hours, and, when work remains, the remaining hours and
+    the deadline risk.
 
-        Physics Lab        100% scheduled   COMPLETE
-        Math Homework       50% scheduled   PARTIAL
-        Computer Science     0% scheduled   UNSCHEDULED
+    Every number comes from the functions above; nothing is
+    recalculated here. The Risk line needs the study slots and today
+    (to know how much time exists before the deadline), so it is
+    printed only when `time_slots` is given.
     """
-    if not analyses:
-        return "No active assignments to analyse."
-    width = max(len(x.assignment.name) for x in analyses)
-    lines = ["StudyFlow Schedule Analysis", ""]
-    for x in analyses:
-        lines.append(
-            f"{x.assignment.name:<{width}}  {x.percent_scheduled:3.0f}% scheduled   {x.status}"
-        )
+    # The optimizer builds on this module, so import it here rather
+    # than at the top to avoid a circular import.
+    from schedule_optimizer import deadline_risk_ratio, risk_level
+
+    assignments = list(assignments)
+    lines: List[str] = [
+        _BANNER,
+        "STUDYFLOW ANALYSIS".center(_WIDTH).rstrip(),
+        _BANNER,
+        "",
+        f"Required work:   {total_required_hours(assignments):6.1f}h",
+        f"Scheduled work:  {total_scheduled_hours(result):6.1f}h",
+        f"Unscheduled work:{total_unscheduled_hours(result):6.1f}h",
+        f"Completion:      {completion_percentage(result, assignments):6.1f}%",
+        "",
+        _RULE,
+        "ASSIGNMENTS",
+        _RULE,
+    ]
+
+    rows = analyze_assignments(result, assignments)
+    if not rows:
+        lines += ["", "No active assignments to analyse."]
+        return "\n".join(lines)
+
+    for row in rows:
+        lines += ["", row.assignment.name,
+                  f"  Status: {row.status}",
+                  f"  Scheduled: {row.scheduled_hours:.1f}h"]
+        if row.remaining_hours > 0:
+            lines.append(f"  Remaining: {row.remaining_hours:.1f}h")
+            if time_slots is not None:
+                ratio = deadline_risk_ratio(row.assignment, result, time_slots, today or date.today())
+                lines.append(f"  Risk: {risk_level(ratio)}")
     return "\n".join(lines)
 
 

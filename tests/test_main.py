@@ -85,19 +85,22 @@ def test_generate_study_plan_flow_with_nothing_at_all(capsys):
     assert "None. Every assignment is fully scheduled." in out
 
 
-def test_schedule_analysis_flow_prints_the_per_assignment_table(capsys):
+def test_schedule_analysis_flow_prints_the_analysis_report(capsys):
     add_week_of_work()
     main.schedule_analysis_flow()
     out = capsys.readouterr().out
-    assert "StudyFlow Schedule Analysis" in out
-    assert "100% scheduled   COMPLETE" in out      # Physics
-    assert "UNSCHEDULED" in out                    # CS
+    assert "STUDYFLOW ANALYSIS" in out
+    assert "Required work:      7.0h" in out
+    assert "Physics\n  Status: COMPLETE\n  Scheduled: 3.0h" in out
+    assert "CS\n  Status: UNSCHEDULED\n  Scheduled: 0.0h\n  Remaining: 2.0h\n  Risk: " in out
     assert "Essay" not in out
 
 
 def test_schedule_analysis_flow_with_no_assignments(capsys):
     main.schedule_analysis_flow()
-    assert "No active assignments to analyse." in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "STUDYFLOW ANALYSIS" in out
+    assert "No active assignments to analyse." in out
 
 
 # ---------- The menus ----------
@@ -152,5 +155,5 @@ def test_end_to_end_a_student_enters_data_and_generates_a_plan(monkeypatch, caps
     assert "Required work:      3.0h" in out
     assert "Scheduled work:     2.0h" in out
     assert "Physics\n1.0h remaining" in out
-    assert "67% scheduled   PARTIAL" in out
+    assert "Physics\n  Status: PARTIAL\n  Scheduled: 2.0h\n  Remaining: 1.0h\n  Risk: " in out
     assert out.rstrip().endswith("Goodbye!")
