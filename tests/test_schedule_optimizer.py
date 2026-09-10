@@ -7,10 +7,14 @@ time exists between today and an assignment's due date. The first
 four tests are the ones from the brief; the rest pin the edges.
 """
 
+import math
 from datetime import date, timedelta
 
+import pytest
+
 from models import Assignment, Priority, TimeSlot, Weekday
-from schedule_optimizer import available_hours_before_deadline
+from schedule_builder import ScheduledBlock, ScheduleResult, build_schedule
+from schedule_optimizer import available_hours_before_deadline, deadline_risk_ratio
 
 MONDAY = date(2026, 8, 17)  # a known Monday
 TUESDAY = MONDAY + timedelta(days=1)
@@ -111,3 +115,87 @@ def test_today_can_be_any_weekday():
     """Start on a Wednesday: only Wednesday to Friday count, not the earlier days."""
     slots = week(monday=2, tuesday=2, wednesday=1, thursday=1, friday=1)
     assert available_hours_before_deadline(task("Due Friday", FRIDAY, 2), slots, WEDNESDAY) == 3.0
+
+
+# =====================================================================
+# deadline_risk_ratio: available hours / remaining hours
+# =====================================================================
+
+def scheduled(assignment: Assignment, hours: float, day: date = MONDAY) -> ScheduleResult:
+    """A schedule with `hours` of this assignment placed on `day`."""
+    start = 16 * 60
+    return ScheduleResult(by_date={day: [ScheduledBlock(start, start + round(hours * 60), assignment.name)]})
+
+
+def test_ratio_0_5_is_a_critical_situation():
+    """Remaining 4h (6 required, 2 scheduled); available 2h -> 0.5."""
+    physics = task("Physics", MONDAY, 6)
+    assert deadline_risk_ratio(physics, scheduled(physics, 2), week(monday=2), MONDAY) == 0.5
+
+
+def test_ratio_1_0_is_exactly_enough_time():
+    """Remaining 4h; available 4h (Mon 2, Tue 2, due Tuesday) -> 1.0."""
+    physics = task("Physics", TUESDAY, 6)
+    assert deadline_risk_ratio(physics, scheduled(physics, 2), week(monday=2, tuesday=2), MONDAY) == 1.0
+
+
+def test_ratio_1_5_is_the_moderate_boundary():
+    """The brief's second example: remaining 4h, available 6h -> 1.5."""
+    physics = task("Physics", WEDNESDAY, 6)
+    slots = week(monday=2, tuesday=2, wednesday=2)
+    assert deadline_risk_ratio(physics, scheduled(physics, 2), slots, MONDAY) == 1.5
+
+
+def test_ratio_2_0_is_the_low_boundary():
+    """Remaining 4h; available 8h (2h a day, Monday to Thursday) -> 2.0."""
+    physics = task("Physics", THURSDAY, 6)
+    slots = week(monday=2, tuesday=2, wednesday=2, thursday=2)
+    assert deadline_risk_ratio(physics, scheduled(physics, 2), slots, MONDAY) == 2.0
+
+
+def test_ratio_3_0_is_plenty_of_time():
+    """Remaining 2h (4 required, 2 scheduled); available 6h -> 3.0."""
+    essay = task("Essay", WEDNESDAY, 4)
+    slots = week(monday=2, tuesday=2, wednesday=2)
+    assert deadline_risk_ratio(essay, scheduled(essay, 2), slots, MONDAY) == 3.0
+
+
+def test_ratio_for_completed_assignment_is_infinite():
+    done = Assignment(name="Done", subject="Done", due_date=TUESDAY, estimated_hours=5, completed=True)
+    assert deadline_risk_ratio(done, ScheduleResult(), week(monday=2), MONDAY) == math.inf
+
+
+def test_ratio_for_zero_hour_assignment_is_infinite():
+    reading = task("Reading", TUESDAY, 0)
+    assert deadline_risk_ratio(reading, ScheduleResult(), week(monday=2), MONDAY) == math.inf
+
+
+def test_ratio_with_no_remaining_work_is_infinite():
+    """Fully scheduled: nothing left to find time for."""
+    physics = task("Physics", TUESDAY, 2)
+    assert deadline_risk_ratio(physics, scheduled(physics, 2), week(monday=2), MONDAY) == math.inf
+
+
+def test_ratio_for_overdue_work_is_zero():
+    """Work left and no time before a deadline that has passed."""
+    late = task("Late", MONDAY - timedelta(days=1), 3)
+    assert deadline_risk_ratio(late, ScheduleResult(), week(monday=2, tuesday=2), MONDAY) == 0.0
+
+
+def test_ratio_with_no_study_time_is_zero():
+    assert deadline_risk_ratio(task("Anything", FRIDAY, 3), ScheduleResult(), [], MONDAY) == 0.0
+
+
+def test_ratio_uses_the_real_schedule():
+    """
+    Through build_schedule: two 2-hour slots, Physics 3h due Tuesday
+    and Math 3h due Wednesday. Physics fits (infinite); Math gets 45
+    minutes after a break, leaving 2.25h against 4h of capacity
+    before Wednesday.
+    """
+    slots = week(monday=2, tuesday=2)
+    physics = task("Physics", TUESDAY, 3)
+    math_hw = task("Math", WEDNESDAY, 3)
+    result = build_schedule([physics, math_hw], slots, today=MONDAY)
+    assert deadline_risk_ratio(physics, result, slots, MONDAY) == math.inf
+    assert deadline_risk_ratio(math_hw, result, slots, MONDAY) == pytest.approx(4 / 2.25)
