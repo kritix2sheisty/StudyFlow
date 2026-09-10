@@ -1,3 +1,7 @@
+*.py[cod]
+.web
+assets/external/
+.states
 __pycache__/
 *.pyc
 .venv/
@@ -5,3 +9,7 @@ venv/
 .env
 *.db
 .pytest_cache/
+# Reflex writes these on init/import; agent instructions, not project files
+AGENTS.md
+CLAUDE.md
+.claude/
