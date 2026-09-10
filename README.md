@@ -98,7 +98,7 @@ module docstring of `scheduler.py`.
 
 * Show assignment status and deadline risk in the study plan report
 * Improve schedule optimization (spread work evenly, cap hours per day)
-* Add a graphical/web interface
+* Grow the web interface toward multi-student use (see the roadmap above)
 * Introduce AI-assisted study recommendations
 
 ## Scheduling Algorithm
@@ -143,11 +143,48 @@ Tests live in `tests/`. A `conftest.py` at the project root puts the project
 on the import path, so `pytest` works from the project root without any
 packaging.
 
+## Web interface (Reflex)
+
+StudyFlow's user interface is built with [Reflex](https://reflex.dev), a
+Python framework that compiles to a real web app. One page lets a student
+enter assignments and weekly study time, generate the plan, and see the
+timetable, progress and per-assignment risk.
+
+```
+pip install -r requirements.txt
+reflex run
+```
+
+Open http://localhost:3000. On an older Windows console `reflex run` can crash
+with a `UnicodeEncodeError` from its progress spinner; use Windows Terminal or
+set `PYTHONUTF8=1` first.
+
+The page holds no logic. Every event calls `studyflow_web/service.py`, which
+calls the engine and returns plain rows for the page to render. That file is
+the seam for the long-term goal: use by schools, where many students each see
+only their own data. When that arrives the service functions gain a student
+argument and the pages stay the same.
+
+**Decision: Reflex rather than Streamlit.** Streamlit is a single script
+re-run top to bottom on every interaction, which suits a personal tool but
+fights multi-user apps: per-user state, log-in, and separate pages all work
+against it. Reflex gives an ordinary web app (state per session, routing,
+authentication when needed, a normal deployment) while staying in Python and
+reusing the engine unchanged.
+
+## Roadmap to school use
+
+1. Accounts: a student signs in and sees only their own assignments and time.
+2. Storage: move from one SQLite file to a database with a student column,
+   behind the same service functions.
+3. Classes and tests in the web UI (the CLI already manages them).
+4. Hosting: one deployment a school can point students at.
+
 ## Technologies
 
 * Python
 * SQLite
-* Streamlit *(planned/under development)*
+* Reflex (web interface)
 * Algorithms and data structures
 * AI/LLM integration *(future phase)*
 
