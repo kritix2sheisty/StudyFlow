@@ -215,7 +215,8 @@ def nav_link(label: str, active: bool = False) -> rx.Component:
         label, href="#", size="2", weight="medium", underline="none",
         color="white" if active else rx.color("gray", 12),
         background=rx.color("accent", 9) if active else "transparent",
-        padding_x="3", padding_y="1", border_radius="999px",
+        padding_x="4", padding_y="2", border_radius="999px",
+        white_space="nowrap", display="inline-block",
         style={} if active else {"_hover": {"background": rx.color("gray", 4)}},
     )
 
@@ -237,15 +238,15 @@ def header() -> rx.Component:
         ),
         rx.spacer(),
         rx.hstack(
-            rx.hstack(
+            rx.flex(
                 *[nav_link(item, active=(item == "Dashboard")) for item in NAV_ITEMS],
-                spacing="1", wrap="wrap",
+                spacing="2", wrap="wrap", align="center",
                 padding="1", border_radius="999px", background=rx.color("gray", 2),
             ),
             rx.color_mode.button(size="2", variant="ghost"),
             spacing="3", align="center",
         ),
-        width="100%", align="center", wrap="wrap", gap="4", padding_y="4",
+        width="100%", align="center", wrap="wrap", spacing="4", padding_y="4",
         border_bottom=f"1px solid {rx.color('gray', 4)}",
     )
 
@@ -335,9 +336,9 @@ def call_to_action() -> rx.Component:
                           size="3", width=TAP_WIDTH, on_click=DashboardState.generate_study_plan),
                 rx.button(rx.icon("plus", size=18), "Add Assignment",
                           size="3", width=TAP_WIDTH, variant="soft", on_click=DashboardState.open_form),
-                gap="3", wrap="wrap", width=TAP_WIDTH,
+                spacing="3", wrap="wrap", width=TAP_WIDTH,
             ),
-            width="100%", align="center", wrap="wrap", gap="4",
+            width="100%", align="center", wrap="wrap", spacing="4",
         ),
         size="3", width="100%",
         background=rx.color("accent", 2),
@@ -359,36 +360,35 @@ def assignment_card(a: dict) -> rx.Component:
     ink = rx.match(a["risk"], *RISK_INK.items(), "var(--gray-11)")
     return rx.box(
         # Strip: due countdown on the left, risk badge on the right.
-        rx.hstack(
+        # Both are allowed to wrap onto their own line in a narrow card
+        # rather than run into each other.
+        rx.flex(
             rx.hstack(
-                rx.heading(a["due_in_days"], size="8", line_height="1", color=ink),
-                rx.vstack(
-                    rx.text("days", size="2", weight="bold", color=ink, line_height="1"),
-                    rx.text("left", size="2", weight="bold", color=ink, line_height="1"),
-                    spacing="1", align="start",
-                ),
-                spacing="2", align="center",
+                rx.heading(a["due_in_days"], size="7", line_height="1", color=ink),
+                rx.text("days left", size="2", weight="bold", color=ink, white_space="nowrap"),
+                spacing="2", align="baseline", min_width="7em",
             ),
             rx.spacer(),
             risk_badge(a["risk"]),
-            width="100%", align="center",
+            width="100%", align="center", wrap="wrap", spacing="3",
             padding_x="4", padding_y="3",
             background=rx.match(a["risk"], *RISK_TINTS.items(), "var(--gray-3)"),
         ),
-        # Body: what it is.
+        # Body: what it is. Long names wrap instead of overflowing.
         rx.vstack(
-            rx.heading(a["name"], size="4"),
+            rx.heading(a["name"], size="4", line_height="1.3", style={"overflow_wrap": "anywhere"}),
             rx.text(a["subject"], size="2", color_scheme="gray"),
-            spacing="0", align="start", width="100%",
-            padding_x="4", padding_top="3", padding_bottom="2",
+            spacing="1", align="start", width="100%",
+            padding_x="4", padding_top="4", padding_bottom="3",
         ),
-        # Footer: the detail.
-        rx.hstack(
+        # Footer: the detail, hours left and priority right, wrapping if tight.
+        rx.flex(
             rx.hstack(rx.icon("clock", size=14, color=rx.color("gray", 10)),
-                      rx.text(a["hours"], size="2", color_scheme="gray"), spacing="1", align="center"),
+                      rx.text(a["hours"], size="2", color_scheme="gray", white_space="nowrap"),
+                      spacing="2", align="center"),
             rx.spacer(),
             priority_badge(a["priority"]),
-            width="100%", align="center",
+            width="100%", align="center", wrap="wrap", spacing="3",
             padding_x="4", padding_bottom="4",
         ),
         width="100%",
@@ -545,7 +545,7 @@ def assignment_form() -> rx.Component:
                               width=TAP_WIDTH, on_click=s.close_form),
                     rx.button(rx.icon("plus", size=18), "Add Assignment", size="3",
                               width=TAP_WIDTH, on_click=s.submit_form),
-                    gap="3", wrap="wrap", justify="end", width="100%", padding_top="2",
+                    spacing="3", wrap="wrap", justify="end", width="100%", padding_top="2",
                 ),
                 spacing="4", width="100%", padding_top="3",
             ),
