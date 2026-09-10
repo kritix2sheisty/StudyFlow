@@ -31,13 +31,18 @@ from datetime import date, datetime
 
 import reflex as rx
 
+from storage import add_assignment, init_db, list_assignments
 from StudyFlow import assignments as forms
 from StudyFlow.sample_data import (
-    SAMPLE_ASSIGNMENTS,
     SAMPLE_OVERVIEW,
     SAMPLE_PROGRESS,
     SAMPLE_TODAY_PLAN,
 )
+
+# Make sure the SQLite database and its tables exist before the first
+# assignment is added. init_db() is CREATE TABLE IF NOT EXISTS, so
+# running it on every start is safe.
+init_db()
 
 # Badge and accent colours for the two labels a student scans first.
 PRIORITY_COLORS = {"HIGH": "red", "MEDIUM": "orange", "LOW": "green"}
@@ -74,10 +79,17 @@ class DashboardState(rx.State):
     how the page renders them.
     """
 
+    # Assignments come from the database (storage.py) and are loaded
+    # when the page opens; see load_assignments. The other three are
+    # still sample data until the scheduler is connected.
+    assignments: list[dict[str, str]] = []
     overview: dict[str, str] = SAMPLE_OVERVIEW
-    assignments: list[dict[str, str]] = SAMPLE_ASSIGNMENTS
     today_plan: list[dict[str, str]] = SAMPLE_TODAY_PLAN
     progress: dict[str, str] = SAMPLE_PROGRESS
+
+    def load_assignments(self):
+        """Read the active assignments from the database, soonest due first."""
+        self.assignments = forms.rows_from(list_assignments(include_completed=False), date.today())
 
     @rx.var
     def greeting(self) -> str:
@@ -152,6 +164,7 @@ class DashboardState(rx.State):
         self.form_hours = ""
         self.form_priority = "MEDIUM"
         self.form_errors = forms.no_errors()
+        self.form_save_error = ""
 
     def set_form_open(self, is_open: bool):
         """Called when the dialog is dismissed by clicking outside or pressing Escape."""
@@ -160,16 +173,29 @@ class DashboardState(rx.State):
         else:
             self.close_form()
 
+    # Set when saving to the database fails; shown at the top of the form.
+    form_save_error: str = ""
+
     def submit_form(self):
-        """Validate; on success add the row, most urgent first, and close."""
+        """
+        Validate, build a real Assignment, save it through storage.py,
+        reload the list from the database, and close. If saving fails,
+        keep the form open with a plain message instead of a traceback.
+        """
         values = (self.form_name, self.form_subject, self.form_due, self.form_hours, self.form_priority)
         self.form_errors = forms.validate_form(*values)
+        self.form_save_error = ""
         if not forms.is_valid(self.form_errors):
             return
-        row = forms.build_row(*values, today=date.today())
-        self.assignments = forms.sorted_by_urgency(self.assignments + [row])
+        assignment = forms.to_assignment(*values)
+        try:
+            add_assignment(assignment)
+        except Exception:
+            self.form_save_error = "StudyFlow could not save that assignment. Please try again."
+            return
+        self.load_assignments()
         self.close_form()
-        return rx.toast.success(f"Added {row['name']}.")
+        return rx.toast.success(f"Added {assignment.name}.")
 
 
 # ---------------------------------------------------------------------
@@ -404,10 +430,23 @@ def upcoming_assignments() -> rx.Component:
     return section(
         "Upcoming Assignments",
         "What's due next, most urgent first.",
-        rx.grid(
-            rx.foreach(DashboardState.assignments, assignment_card),
-            columns=rx.breakpoints(initial="1", md="2", lg="3"),
-            spacing="4", width="100%",
+        rx.cond(
+            DashboardState.assignments.length() > 0,
+            rx.grid(
+                rx.foreach(DashboardState.assignments, assignment_card),
+                columns=rx.breakpoints(initial="1", md="2", lg="3"),
+                spacing="4", width="100%",
+            ),
+            rx.card(
+                rx.vstack(
+                    rx.icon("inbox", size=28, color=rx.color("gray", 9)),
+                    rx.text("No upcoming assignments yet.", weight="medium"),
+                    rx.text("Add one with the button above and it will appear here.",
+                            size="2", color_scheme="gray"),
+                    spacing="2", align="center", padding_y="6",
+                ),
+                width="100%",
+            ),
         ),
     )
 
@@ -517,6 +556,11 @@ def assignment_form() -> rx.Component:
         rx.dialog.content(
             rx.dialog.title("Add Assignment"),
             rx.dialog.description("Tell StudyFlow what is due and how long it will take.", size="2"),
+            rx.cond(
+                s.form_save_error != "",
+                rx.callout(s.form_save_error, icon="triangle_alert", color_scheme="red", size="1",
+                           margin_top="3"),
+            ),
             rx.vstack(
                 form_field("Assignment name",
                            rx.input(value=s.form_name, on_change=s.set_form_name,
@@ -588,4 +632,4 @@ def index() -> rx.Component:
 app = rx.App(
     theme=rx.theme(accent_color="indigo", gray_color="slate", radius="large", scaling="100%"),
 )
-app.add_page(index, title="StudyFlow")
+app.add_page(index, title="StudyFlow", on_load=DashboardState.load_assignments)

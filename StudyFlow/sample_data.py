@@ -19,38 +19,9 @@ SAMPLE_OVERVIEW = {
     "completion": "72",
 }
 
-# Upcoming assignments, most urgent first.
-# "due_in_days" is the bare number so the card can show it large;
-# "due" is the same fact as a sentence.
-SAMPLE_ASSIGNMENTS = [
-    {
-        "name": "Mathematics IA",
-        "subject": "Pure Mathematics",
-        "due": "Due in 3 days",
-        "due_in_days": "3",
-        "hours": "5 hours",
-        "priority": "HIGH",
-        "risk": "HIGH RISK",
-    },
-    {
-        "name": "Computer Science Project",
-        "subject": "Computer Science",
-        "due": "Due in 6 days",
-        "due_in_days": "6",
-        "hours": "4 hours",
-        "priority": "MEDIUM",
-        "risk": "MODERATE RISK",
-    },
-    {
-        "name": "Physics Lab Report",
-        "subject": "Physics",
-        "due": "Due in 8 days",
-        "due_in_days": "8",
-        "hours": "2 hours",
-        "priority": "LOW",
-        "risk": "LOW RISK",
-    },
-]
+# Assignments are no longer sampled: the dashboard reads them from the
+# database through storage.py (see StudyFlow/assignments.py for the
+# row shape).
 
 # Today's study plan, in time order. "is_break" marks rest periods.
 SAMPLE_TODAY_PLAN = [

@@ -14,9 +14,13 @@ beyond calling those modules.
 """
 
 from datetime import date, datetime
-from typing import Dict, List
+from typing import Dict, Iterable, List
 
-PRIORITIES = ["LOW", "MEDIUM", "HIGH"]
+from models import Assignment, Priority
+
+# The form's priority choices are the Priority enum's names, in order,
+# so a submitted value maps straight to Priority[value].
+PRIORITIES = [p.name for p in Priority]
 FIELDS = ["name", "subject", "due", "hours", "priority"]
 
 # Shown until the scheduler has run; the risk badge falls back to grey.
@@ -85,23 +89,48 @@ def hours_in_words(hours: float) -> str:
     return "1 hour" if hours == 1 else f"{hours:g} hours"
 
 
-def build_row(name: str, subject: str, due: str, hours: str, priority: str, today: date) -> Dict[str, str]:
+def to_assignment(name: str, subject: str, due: str, hours: str, priority: str) -> Assignment:
     """
-    The dashboard's row for one assignment, in the same shape as the
-    sample data: every value a string. Call validate_form() first;
+    Turn the validated form strings into a real models.Assignment,
+    ready for storage.add_assignment(). Call validate_form() first;
     this assumes the values are good.
     """
-    due_date = parse_due(due)
-    days = (due_date - today).days
+    return Assignment(
+        name=name.strip(),
+        subject=subject.strip(),
+        due_date=parse_due(due),
+        estimated_hours=parse_hours(hours),
+        priority=Priority[priority],
+        completed=False,
+    )
+
+
+def row_from_assignment(a: Assignment, today: date) -> Dict[str, str]:
+    """
+    The dashboard's row for one stored assignment: every value a
+    string, plus the id so later features can edit or delete it.
+    """
+    days = (a.due_date - today).days
     return {
-        "name": name.strip(),
-        "subject": subject.strip(),
+        "id": str(a.id) if a.id is not None else "",
+        "name": a.name,
+        "subject": a.subject,
         "due": due_in_words(days),
         "due_in_days": str(max(days, 0)),
-        "hours": hours_in_words(parse_hours(hours)),
-        "priority": priority,
+        "hours": hours_in_words(a.estimated_hours),
+        "priority": a.priority.name,
         "risk": RISK_NOT_RATED,
     }
+
+
+def rows_from(assignments: Iterable[Assignment], today: date) -> List[Dict[str, str]]:
+    """Rows for the dashboard, in the order storage returned them (soonest due first)."""
+    return [row_from_assignment(a, today) for a in assignments]
+
+
+def build_row(name: str, subject: str, due: str, hours: str, priority: str, today: date) -> Dict[str, str]:
+    """The row the form's values would show as, without saving. Used by tests."""
+    return row_from_assignment(to_assignment(name, subject, due, hours, priority), today)
 
 
 def sorted_by_urgency(rows: List[Dict[str, str]]) -> List[Dict[str, str]]:

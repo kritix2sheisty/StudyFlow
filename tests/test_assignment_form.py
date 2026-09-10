@@ -35,6 +35,7 @@ def test_valid_assignment_has_no_errors():
 def test_valid_assignment_builds_the_dashboard_row():
     row = build_row("Chemistry Lab", "Chemistry", "2026-09-15", "2.5", "HIGH", TODAY)
     assert row == {
+        "id": "",                       # not saved yet, so no database id
         "name": "Chemistry Lab",
         "subject": "Chemistry",
         "due": "Due in 6 days",
