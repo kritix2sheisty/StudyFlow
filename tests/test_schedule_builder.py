@@ -13,7 +13,13 @@ from datetime import date, timedelta
 import pytest
 
 from models import Assignment, Priority, TimeSlot, Weekday
-from schedule_builder import _can_schedule_on, build_schedule, format_schedule
+from schedule_builder import (
+    ScheduledBlock,
+    ScheduleResult,
+    _can_schedule_on,
+    build_schedule,
+    format_schedule,
+)
 
 MONDAY = date(2026, 8, 17)  # a known Monday, for deterministic weekday math
 TUESDAY = MONDAY + timedelta(days=1)
@@ -42,6 +48,23 @@ def minutes_of(result, day: date, label: str) -> int:
                for b in result.by_date.get(day, []) if b.label == label)
 
 
+def assert_no_overlaps(result: ScheduleResult) -> None:
+    """
+    Schedule validity: on every day, once blocks are sorted by start
+    time, each block must start no earlier than the previous one ends.
+    Breaks count as blocks too; a break overlapping work is as wrong
+    as two assignments overlapping. Raises AssertionError with the
+    day and the two offending blocks otherwise.
+    """
+    for day, blocks in result.by_date.items():
+        ordered = sorted(blocks, key=lambda b: b.start_minute)
+        for current, nxt in zip(ordered, ordered[1:]):
+            assert nxt.start_minute >= current.end_minute, (
+                f"{day}: {current.label} {current.format_time_range()} overlaps "
+                f"{nxt.label} {nxt.format_time_range()}"
+            )
+
+
 # =====================================================================
 # Part 1 — basics
 # =====================================================================
@@ -65,6 +88,7 @@ def test_break_inserted_between_two_tasks_in_same_slot():
     ]
     result = build_schedule(assignments, slots, today=MONDAY, break_minutes=15)
     assert labels(result, MONDAY) == ["Physics", "Break", "CS"]
+    assert_no_overlaps(result)
     break_block = result.by_date[MONDAY][1]
     assert break_block.end_minute - break_block.start_minute == 15
 
@@ -290,6 +314,7 @@ def test_review_example_physics_finishes_before_tuesday_and_cs_takes_wednesday()
     assert "Physics" not in labels(result, WEDNESDAY)
     assert "CS" in labels(result, WEDNESDAY)
     assert not any(a.name == "Physics" for a, _ in result.unscheduled)
+    assert_no_overlaps(result)
 
 
 def test_earlier_deadline_gets_time_even_when_a_bigger_task_outranks_it():
@@ -314,6 +339,7 @@ def test_earlier_deadline_gets_time_even_when_a_bigger_task_outranks_it():
     assert not any(a.name == "Worksheet" for a, _ in result.unscheduled)
     # Exam prep still gets everything that is left.
     assert any(a.name == "Exam prep" for a, _ in result.unscheduled)
+    assert_no_overlaps(result)
 
 
 def test_earlier_deadline_is_protected():
@@ -349,6 +375,7 @@ def test_earlier_deadline_is_protected():
 
     # The shortfall lands on Physics, the one with time to spare.
     assert result.unscheduled == [(physics, 1.0)]
+    assert_no_overlaps(result)
 
 
 def test_same_deadline_falls_back_to_phase_2_order():
@@ -377,6 +404,7 @@ def test_later_task_fills_leftover_room_in_an_earlier_block():
     result = build_schedule(assignments, slots, today=MONDAY)
     assert labels(result, MONDAY) == ["Due Monday", "Break", "Due Tuesday"]
     assert result.unscheduled == []
+    assert_no_overlaps(result)
 
 
 # =====================================================================
@@ -402,6 +430,7 @@ def test_two_one_hour_tasks_in_a_two_hour_slot_share_a_break():
     assert labels(result, MONDAY) == ["First", "Break", "Second"]
     assert minutes_of(result, MONDAY, "Second") == 45
     assert result.unscheduled == [(assignments[1], 0.25)]
+    assert_no_overlaps(result)
 
 
 def test_task_bigger_than_its_slot_fills_it_with_no_break():
@@ -438,6 +467,78 @@ def test_break_that_leaves_no_room_for_work_is_not_inserted():
     result = build_schedule(assignments, slots, today=MONDAY, break_minutes=15)
     assert labels(result, MONDAY) == ["Long"]
     assert result.unscheduled == [(assignments[1], 0.25)]
+
+
+# =====================================================================
+# Part 3 — schedule validity
+# =====================================================================
+
+def test_scheduled_blocks_do_not_overlap():
+    """
+    Three 2-hour assignments compete for one 2-hour slot. At most two
+    hours of work may be scheduled, and no two blocks may overlap.
+    """
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    assignments = [
+        task("Math", TUESDAY, 2, Priority.MEDIUM),
+        task("Physics", TUESDAY, 2, Priority.HIGH),
+        task("CS", TUESDAY, 2, Priority.LOW),
+    ]
+    result = build_schedule(assignments, slots, today=MONDAY)
+    assert_no_overlaps(result)
+
+    total_work = sum(b.end_minute - b.start_minute
+                     for b in result.by_date[MONDAY] if b.label != "Break")
+    assert total_work <= 120
+    # Only one of the three fits; the other two are reported in full.
+    assert labels(result, MONDAY) == ["Physics"]
+    assert sorted(a.name for a, _ in result.unscheduled) == ["CS", "Math"]
+    assert all(hours == 2.0 for _, hours in result.unscheduled)
+
+
+def test_no_overlaps_across_a_crowded_week():
+    """
+    Many assignments, mixed deadlines, two slots on some days, and
+    later tasks back-filling leftover room in earlier blocks. Every
+    day must still be a clean sequence of non-overlapping blocks.
+    """
+    slots = [
+        slot(Weekday.MONDAY, 8, 9), slot(Weekday.MONDAY, 16, 18),
+        slot(Weekday.TUESDAY, 16, 18),
+        slot(Weekday.WEDNESDAY, 8, 9), slot(Weekday.WEDNESDAY, 16, 17),
+        slot(Weekday.THURSDAY, 16, 18),
+    ]
+    assignments = [
+        task("Overdue", MONDAY - timedelta(days=1), 0.5, Priority.LOW),
+        task("Due today", MONDAY, 1.5, Priority.MEDIUM),
+        task("Math", TUESDAY, 2, Priority.MEDIUM),
+        task("Physics", WEDNESDAY, 2.25, Priority.HIGH),
+        task("CS", THURSDAY, 3, Priority.HIGH),
+        task("Essay", FRIDAY, 1, Priority.LOW),
+        task("Done", TUESDAY, 5, Priority.HIGH, completed=True),
+    ]
+    result = build_schedule(assignments, slots, today=MONDAY, break_minutes=10)
+    assert_no_overlaps(result)
+    assert "Done" not in {b.label for blocks in result.by_date.values() for b in blocks}
+
+
+def test_assert_no_overlaps_catches_an_overlap():
+    """The helper must fail on the exact schedule the brief forbids."""
+    bad = ScheduleResult(by_date={MONDAY: [
+        ScheduledBlock(16 * 60, 17 * 60, "Math"),
+        ScheduledBlock(16 * 60, 18 * 60, "Physics"),
+    ]})
+    with pytest.raises(AssertionError, match="Math .* overlaps Physics"):
+        assert_no_overlaps(bad)
+
+
+def test_assert_no_overlaps_accepts_touching_blocks():
+    """A block that starts exactly when the previous one ends is fine."""
+    ok = ScheduleResult(by_date={MONDAY: [
+        ScheduledBlock(17 * 60, 18 * 60, "Physics"),   # deliberately out of order
+        ScheduledBlock(16 * 60, 17 * 60, "Math"),
+    ]})
+    assert_no_overlaps(ok)
 
 
 def test_format_schedule_mentions_due_date_for_unscheduled_work():
