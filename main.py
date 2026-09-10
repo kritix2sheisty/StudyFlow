@@ -10,7 +10,7 @@ from datetime import date, datetime
 import storage
 from models import Assignment, Class, Priority, Test, TimeSlot, Weekday
 from scheduler import prioritize_assignments
-from schedule_analyzer import analyze_assignments, format_analysis
+from schedule_analyzer import format_analysis
 from study_plan import format_study_plan, generate_study_plan
 
 BANNER = """
@@ -197,11 +197,11 @@ def generate_study_plan_flow() -> None:
 
 
 def schedule_analysis_flow() -> None:
-    """The per-assignment table: how much of each assignment is placed."""
+    """The analysis report: totals, then status, hours and risk per assignment."""
     assignments = storage.list_assignments(include_completed=False)
     slots = storage.list_time_slots()
     plan = generate_study_plan(assignments, slots)
-    print(format_analysis(analyze_assignments(plan.schedule, assignments)))
+    print(format_analysis(plan.schedule, assignments, slots, today=plan.today))
 
 
 def run_menu(title: str, options: dict, back_label: str = "Back") -> None:

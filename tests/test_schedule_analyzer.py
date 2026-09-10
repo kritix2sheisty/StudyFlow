@@ -447,19 +447,92 @@ def test_analysis_skips_completed_and_treats_zero_hours_as_complete():
     assert rows[0].percent_scheduled == 100.0
 
 
-def test_format_analysis_renders_the_table():
-    result, assignments = _brief_example()
-    text = format_analysis(analyze_assignments(result, assignments))
-    lines = text.splitlines()
-    assert lines[0] == "StudyFlow Schedule Analysis"
-    assert lines[2] == "Physics Lab       100% scheduled   COMPLETE"
-    assert lines[3] == "Math Homework      50% scheduled   PARTIAL"
-    assert lines[4] == "Computer Science    0% scheduled   UNSCHEDULED"
-    assert lines[5] == "English Essay     100% scheduled   COMPLETE"
+# ---------- The analysis report ----------
+
+def _report_example():
+    """
+    The report from the brief: Mathematics 2/2h complete, Physics
+    3/5h partial, Computer Science 0/4h unscheduled. Slots give 4h
+    before Physics's Tuesday deadline (ratio 2.0, LOW) and 2h before
+    Computer Science's Monday deadline (ratio 0.5, CRITICAL).
+    """
+    maths = task("Mathematics", 2, due=FRIDAY)
+    physics = task("Physics", 5, due=TUESDAY)
+    cs = task("Computer Science", 4, due=MONDAY)
+    result = ScheduleResult(
+        by_date={MONDAY: [ScheduledBlock(9 * 60, 11 * 60, "Mathematics"),
+                          ScheduledBlock(16 * 60, 19 * 60, "Physics")]},
+        unscheduled=[(physics, 2.0), (cs, 4.0)],
+    )
+    slots = [slot(Weekday.MONDAY, 16, 18), slot(Weekday.TUESDAY, 16, 18)]
+    return result, [maths, physics, cs], slots
 
 
-def test_format_analysis_with_nothing_active():
-    assert format_analysis([]) == "No active assignments to analyse."
+def test_format_analysis_basic_report_has_the_headings_and_totals():
+    result, assignments, slots = _report_example()
+    text = format_analysis(result, assignments, slots, today=MONDAY)
+    for needle in ("STUDYFLOW ANALYSIS", "Required work:", "Scheduled work:",
+                   "Unscheduled work:", "Completion:", "ASSIGNMENTS"):
+        assert needle in text
+    assert "Required work:     11.0h" in text
+    assert "Scheduled work:     5.0h" in text
+    assert "Unscheduled work:   6.0h" in text
+    assert f"Completion:      {5 / 11 * 100:6.1f}%" in text
+
+
+def test_format_analysis_complete_assignment():
+    result, assignments, slots = _report_example()
+    text = format_analysis(result, assignments, slots, today=MONDAY)
+    assert "Mathematics\n  Status: COMPLETE\n  Scheduled: 2.0h\n" in text
+    maths_block = text[text.index("Mathematics"):text.index("Physics")]
+    assert "Remaining" not in maths_block and "Risk" not in maths_block
+
+
+def test_format_analysis_partial_assignment_shows_remaining_hours():
+    result, assignments, slots = _report_example()
+    text = format_analysis(result, assignments, slots, today=MONDAY)
+    assert "Physics\n  Status: PARTIAL\n  Scheduled: 3.0h\n  Remaining: 2.0h\n" in text
+
+
+def test_format_analysis_at_risk_assignment_shows_its_risk_level():
+    result, assignments, slots = _report_example()
+    text = format_analysis(result, assignments, slots, today=MONDAY)
+    assert "Computer Science\n  Status: UNSCHEDULED\n  Scheduled: 0.0h\n  Remaining: 4.0h\n  Risk: CRITICAL" in text
+    assert "Remaining: 2.0h\n  Risk: LOW" in text          # Physics: 4h before Tuesday for 2h left
+
+
+def test_format_analysis_without_slots_omits_the_risk_line():
+    """The brief's two-argument form still works; risk needs the slots."""
+    result, assignments, _ = _report_example()
+    text = format_analysis(result, assignments)
+    assert "Status: UNSCHEDULED" in text
+    assert "Remaining: 4.0h" in text
+    assert "Risk:" not in text
+
+
+def test_format_analysis_with_no_assignments_does_not_crash():
+    text = format_analysis(ScheduleResult(), [])
+    assert "STUDYFLOW ANALYSIS" in text
+    assert "Completion:       100.0%" in text
+    assert "No active assignments to analyse." in text
+
+
+def test_format_analysis_skips_completed_assignments():
+    result, assignments, slots = _report_example()
+    text = format_analysis(result, assignments + [task("Handed in", 3, completed=True)], slots, today=MONDAY)
+    assert "Handed in" not in text
+    assert "Required work:     11.0h" in text
+
+
+def test_format_analysis_uses_the_existing_calculations():
+    """The report's numbers are the analyzer's numbers, not a second computation."""
+    result, assignments, slots = _report_example()
+    text = format_analysis(result, assignments, slots, today=MONDAY)
+    assert f"{total_scheduled_hours(result):6.1f}h" in text
+    assert f"{total_unscheduled_hours(result):6.1f}h" in text
+    assert f"{completion_percentage(result, assignments):6.1f}%" in text
+    for a in assignments:
+        assert f"{a.name}\n  Status: {assignment_status(result, a)}" in text
 
 
 def test_format_summary_renders_the_totals():
