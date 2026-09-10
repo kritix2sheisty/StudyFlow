@@ -18,6 +18,7 @@ from schedule_analyzer import (
     STATUS_PARTIAL,
     STATUS_UNSCHEDULED,
     analyze_assignments,
+    assignment_status,
     completion_percentage,
     format_analysis,
     format_summary,
@@ -242,6 +243,65 @@ def test_scheduled_hours_does_not_count_other_assignments():
     assert scheduled_hours_for_assignment(result, physics) == 3.5
     # A different assignment with a similar name is still a different assignment.
     assert scheduled_hours_for_assignment(result, task("Physics Lab", 1)) == 0.0
+
+
+# =====================================================================
+# assignment_status: required -> scheduled -> remaining -> status
+# =====================================================================
+
+def _status_example():
+    """Physics 4/4h, Math 2.5/4h, CS 0/3h, as in the brief."""
+    physics, math, cs = task("Physics", 4), task("Math", 4), task("CS", 3)
+    result = ScheduleResult(by_date={
+        MONDAY: [ScheduledBlock(8 * 60, 12 * 60, "Physics")],
+        TUESDAY: [ScheduledBlock(16 * 60, 18 * 60 + 30, "Math")],
+    })
+    return result, physics, math, cs
+
+
+def test_status_fully_scheduled_assignment_is_complete():
+    result, physics, _, _ = _status_example()
+    assert assignment_status(result, physics) == STATUS_COMPLETE
+
+
+def test_status_partially_scheduled_assignment_is_partial():
+    result, _, math, _ = _status_example()
+    assert assignment_status(result, math) == STATUS_PARTIAL
+
+
+def test_status_completely_unscheduled_assignment_is_unscheduled():
+    result, _, _, cs = _status_example()
+    assert assignment_status(result, cs) == STATUS_UNSCHEDULED
+
+
+def test_status_zero_hour_assignment_is_complete():
+    """No study time is required, so nothing is missing."""
+    result, _, _, _ = _status_example()
+    assert assignment_status(result, task("Reading", 0)) == STATUS_COMPLETE
+    assert assignment_status(ScheduleResult(), task("Reading", 0)) == STATUS_COMPLETE
+
+
+def test_status_completed_assignment_is_complete_whatever_the_schedule():
+    result, _, _, _ = _status_example()
+    assert assignment_status(result, task("Handed in", 5, completed=True)) == STATUS_COMPLETE
+
+
+def test_status_follows_a_real_schedule():
+    """Through build_schedule: 3h + 2h + 1h wanted, 4h available."""
+    slots = [slot(Weekday.MONDAY, 16, 18), slot(Weekday.TUESDAY, 16, 18)]
+    physics = task("Physics", 3, priority=Priority.HIGH)
+    math = task("Math", 2, priority=Priority.MEDIUM)
+    cs = task("CS", 1, priority=Priority.LOW)
+    result = build_schedule([physics, math, cs], slots, today=MONDAY)
+    assert assignment_status(result, physics) == STATUS_COMPLETE
+    assert assignment_status(result, math) == STATUS_PARTIAL
+    assert assignment_status(result, cs) == STATUS_UNSCHEDULED
+
+
+def test_status_agrees_with_analyze_assignments():
+    result, physics, math, cs = _status_example()
+    rows = analyze_assignments(result, [physics, math, cs])
+    assert [r.status for r in rows] == [assignment_status(result, a) for a in (physics, math, cs)]
 
 
 # =====================================================================
