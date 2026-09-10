@@ -40,6 +40,8 @@ from StudyFlow.sample_data import (
 PRIORITY_COLORS = {"HIGH": "red", "MEDIUM": "orange", "LOW": "green"}
 RISK_COLORS = {"CRITICAL RISK": "crimson", "HIGH RISK": "red", "MODERATE RISK": "orange", "LOW RISK": "green"}
 RISK_BORDERS = {risk: f"4px solid var(--{color}-9)" for risk, color in RISK_COLORS.items()}
+RISK_TINTS = {risk: f"var(--{color}-3)" for risk, color in RISK_COLORS.items()}    # strip background
+RISK_INK = {risk: f"var(--{color}-11)" for risk, color in RISK_COLORS.items()}     # strip text
 
 NAV_ITEMS = ["Dashboard", "Assignments", "Schedule", "Progress"]
 
@@ -261,36 +263,52 @@ def call_to_action() -> rx.Component:
 # ---------------------------------------------------------------------
 
 def assignment_card(a: dict) -> rx.Component:
-    return rx.card(
-        rx.vstack(
-            # Due date and risk first: they are what a student scans for.
+    """
+    Built to be scanned, not read. The top strip is tinted in the
+    risk colour and holds the two things a student looks for first:
+    how many days are left, large, and the risk badge. The body is
+    the name and subject. The footer is the detail: hours and priority.
+    """
+    ink = rx.match(a["risk"], *RISK_INK.items(), "var(--gray-11)")
+    return rx.box(
+        # Strip: due countdown on the left, risk badge on the right.
+        rx.hstack(
             rx.hstack(
-                rx.hstack(
-                    rx.icon("calendar", size=14, color=rx.color("accent", 9)),
-                    rx.text(a["due"], size="2", weight="bold", color=rx.color("accent", 11)),
-                    spacing="1", align="center",
+                rx.heading(a["due_in_days"], size="8", line_height="1", color=ink),
+                rx.vstack(
+                    rx.text("days", size="2", weight="bold", color=ink, line_height="1"),
+                    rx.text("left", size="2", weight="bold", color=ink, line_height="1"),
+                    spacing="1", align="start",
                 ),
-                rx.spacer(),
-                risk_badge(a["risk"]),
-                width="100%", align="center",
+                spacing="2", align="center",
             ),
-            rx.vstack(
-                rx.heading(a["name"], size="4"),
-                rx.text(a["subject"], size="2", color_scheme="gray"),
-                spacing="0", align="start",
-            ),
-            rx.divider(),
-            rx.hstack(
-                rx.hstack(rx.icon("clock", size=14, color=rx.color("gray", 10)),
-                          rx.text(a["hours"], size="2", color_scheme="gray"), spacing="1", align="center"),
-                rx.spacer(),
-                priority_badge(a["priority"]),
-                width="100%", align="center",
-            ),
-            spacing="3", align="start", width="100%",
+            rx.spacer(),
+            risk_badge(a["risk"]),
+            width="100%", align="center",
+            padding_x="4", padding_y="3",
+            background=rx.match(a["risk"], *RISK_TINTS.items(), "var(--gray-3)"),
         ),
-        size="3",
+        # Body: what it is.
+        rx.vstack(
+            rx.heading(a["name"], size="4"),
+            rx.text(a["subject"], size="2", color_scheme="gray"),
+            spacing="0", align="start", width="100%",
+            padding_x="4", padding_top="3", padding_bottom="2",
+        ),
+        # Footer: the detail.
+        rx.hstack(
+            rx.hstack(rx.icon("clock", size=14, color=rx.color("gray", 10)),
+                      rx.text(a["hours"], size="2", color_scheme="gray"), spacing="1", align="center"),
+            rx.spacer(),
+            priority_badge(a["priority"]),
+            width="100%", align="center",
+            padding_x="4", padding_bottom="4",
+        ),
+        width="100%",
+        background=rx.color("gray", 2),
+        border=f"1px solid {rx.color('gray', 5)}",
         border_left=rx.match(a["risk"], *RISK_BORDERS.items(), "4px solid var(--gray-6)"),
+        border_radius="12px", overflow="hidden",
         style=CARD_STYLE,
     )
 

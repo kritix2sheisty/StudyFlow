@@ -18,7 +18,8 @@ def test_dashboard_page_builds():
 
 def test_sample_data_has_the_fields_the_page_reads():
     for a in sample_data.SAMPLE_ASSIGNMENTS:
-        assert set(a) == {"name", "subject", "due", "hours", "priority", "risk"}
+        assert set(a) == {"name", "subject", "due", "due_in_days", "hours", "priority", "risk"}
+        assert a["due_in_days"].isdigit()
     for item in sample_data.SAMPLE_TODAY_PLAN:
         assert set(item) == {"time", "label", "is_break"}
     assert set(sample_data.SAMPLE_OVERVIEW) == {"assignments", "required_hours", "scheduled_hours", "completion"}
