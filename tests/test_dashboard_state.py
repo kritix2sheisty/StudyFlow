@@ -206,6 +206,91 @@ def test_cancelling_delete_keeps_the_row():
     assert len(storage.list_assignments()) == 1
 
 
+# ---------- Study time ----------
+
+def add_slot(state: DashboardState, weekday="Monday", start="4:00 PM", end="6:00 PM") -> None:
+    state.open_slot_form()
+    state.set_slot_weekday(weekday)
+    state.set_slot_start(start)
+    state.set_slot_end(end)
+    state.submit_slot_form()
+
+
+def test_load_data_reads_slots_and_assignments():
+    state = fresh_state()
+    storage.add_time_slot(storage.TimeSlot(weekday=storage.Weekday.WEDNESDAY, start_hour=17, end_hour=19))
+    state.load_data()
+    assert [r["time"] for r in state.slots] == ["5:00 PM – 7:00 PM"]
+    assert state.slot_hours == "2"
+    assert state.assignments == []
+
+
+def test_add_study_time_saves_the_models_24_hour_integers():
+    state = fresh_state()
+    add_slot(state, "Monday", "4:00 PM", "6:00 PM")
+    stored = storage.list_time_slots()
+    assert len(stored) == 1
+    assert stored[0].weekday is storage.Weekday.MONDAY
+    assert (stored[0].start_hour, stored[0].end_hour) == (16, 18)
+    assert state.slot_form_open is False
+    assert state.slots[0]["weekday"] == "Monday" and state.slots[0]["time"] == "4:00 PM – 6:00 PM"
+    assert state.slot_hours == "2"
+
+
+def test_two_slots_show_in_week_order_with_the_total():
+    state = fresh_state()
+    add_slot(state, "Wednesday", "5:00 PM", "7:00 PM")
+    add_slot(state, "Monday", "4:00 PM", "6:00 PM")
+    assert [r["weekday"] for r in state.slots] == ["Monday", "Wednesday"]
+    assert state.slot_hours == "4"
+
+
+def test_end_before_start_is_rejected_and_nothing_is_saved():
+    state = fresh_state()
+    add_slot(state, "Monday", "6:00 PM", "4:00 PM")
+    assert state.slot_form_open is True
+    assert "later than the start" in state.slot_errors["end"]
+    assert storage.list_time_slots() == []
+
+
+def test_empty_slot_form_is_rejected():
+    state = fresh_state()
+    add_slot(state, "", "", "")
+    assert state.slot_form_open is True
+    assert all(state.slot_errors[f] for f in ("weekday", "start", "end"))
+    assert storage.list_time_slots() == []
+
+
+def test_cancel_slot_form_resets_to_the_defaults():
+    state = fresh_state()
+    state.open_slot_form()
+    state.set_slot_weekday("Friday")
+    state.close_slot_form()
+    assert state.slot_form_open is False
+    assert (state.slot_weekday, state.slot_start, state.slot_end) == ("Monday", "4:00 PM", "6:00 PM")
+    assert storage.list_time_slots() == []
+
+
+def test_delete_slot_asks_then_removes():
+    state = fresh_state()
+    add_slot(state)
+    slot_id = state.slots[0]["id"]
+    state.ask_delete_slot(slot_id, "Monday 4:00 PM – 6:00 PM")
+    assert state.slot_delete_open is True and len(storage.list_time_slots()) == 1
+    state.confirm_delete_slot()
+    assert state.slot_delete_open is False
+    assert storage.list_time_slots() == [] and state.slots == []
+    assert state.slot_hours == "0"
+
+
+def test_cancel_delete_slot_keeps_it():
+    state = fresh_state()
+    add_slot(state)
+    state.ask_delete_slot(state.slots[0]["id"], "Monday 4:00 PM – 6:00 PM")
+    state.set_slot_delete_open(False)
+    assert state.slot_delete_open is False and len(storage.list_time_slots()) == 1
+
+
 def test_save_failure_shows_a_message_and_keeps_the_form_open(monkeypatch):
     import StudyFlow.StudyFlow as page
 

@@ -33,13 +33,17 @@ import reflex as rx
 
 from storage import (
     add_assignment,
+    add_time_slot,
     delete_assignment,
+    delete_time_slot,
     init_db,
     list_assignments,
+    list_time_slots,
     mark_assignment_complete,
     update_assignment,
 )
 from StudyFlow import assignments as forms
+from StudyFlow import study_time
 from StudyFlow.sample_data import (
     SAMPLE_OVERVIEW,
     SAMPLE_PROGRESS,
@@ -99,6 +103,104 @@ class DashboardState(rx.State):
     def load_assignments(self):
         """Read the active assignments from the database, soonest due first."""
         self.assignments = forms.rows_from(list_assignments(include_completed=False), date.today())
+
+    # ---- Study time: the student's recurring weekly availability ----
+    #
+    # Rows come from storage.list_time_slots(); the form's labels
+    # ("4:00 PM") are translated to the model's 24-hour integers by
+    # StudyFlow/study_time.py, which is unit-tested on its own.
+
+    slots: list[dict[str, str]] = []
+    slot_hours: str = "0"
+
+    def load_slots(self):
+        stored = list_time_slots()
+        self.slots = study_time.rows_from(stored)
+        self.slot_hours = f"{study_time.total_hours(stored):g}"
+
+    def load_data(self):
+        """Everything a page needs from the database; runs on page load."""
+        self.load_assignments()
+        self.load_slots()
+
+    slot_form_open: bool = False
+    slot_weekday: str = "Monday"
+    slot_start: str = "4:00 PM"
+    slot_end: str = "6:00 PM"
+    slot_errors: dict[str, str] = study_time.no_errors()
+    slot_save_error: str = ""
+
+    def set_slot_weekday(self, value: str):
+        self.slot_weekday = value
+
+    def set_slot_start(self, value: str):
+        self.slot_start = value
+
+    def set_slot_end(self, value: str):
+        self.slot_end = value
+
+    def open_slot_form(self):
+        self.slot_errors = study_time.no_errors()
+        self.slot_save_error = ""
+        self.slot_form_open = True
+
+    def close_slot_form(self):
+        self.slot_form_open = False
+        self.slot_weekday = "Monday"
+        self.slot_start = "4:00 PM"
+        self.slot_end = "6:00 PM"
+        self.slot_errors = study_time.no_errors()
+        self.slot_save_error = ""
+
+    def set_slot_form_open(self, is_open: bool):
+        if is_open:
+            self.open_slot_form()
+        else:
+            self.close_slot_form()
+
+    def submit_slot_form(self):
+        """Validate, build the model's TimeSlot, save it, reload, close."""
+        self.slot_errors = study_time.validate_form(self.slot_weekday, self.slot_start, self.slot_end)
+        self.slot_save_error = ""
+        if not study_time.is_valid(self.slot_errors):
+            return
+        slot = study_time.to_time_slot(self.slot_weekday, self.slot_start, self.slot_end)
+        try:
+            add_time_slot(slot)
+        except Exception:
+            self.slot_save_error = "StudyFlow could not save that study time. Please try again."
+            return
+        self.load_slots()
+        label = f"{self.slot_weekday} {self.slot_start} – {self.slot_end}"
+        self.close_slot_form()
+        return rx.toast.success(f"Added {label}.")
+
+    slot_delete_open: bool = False
+    slot_delete_id: str = ""
+    slot_delete_label: str = ""
+
+    def ask_delete_slot(self, slot_id: str, label: str):
+        self.slot_delete_id = slot_id
+        self.slot_delete_label = label
+        self.slot_delete_open = True
+
+    def cancel_delete_slot(self):
+        self.slot_delete_open = False
+        self.slot_delete_id = ""
+        self.slot_delete_label = ""
+
+    def set_slot_delete_open(self, is_open: bool):
+        if not is_open:
+            self.cancel_delete_slot()
+
+    def confirm_delete_slot(self):
+        label = self.slot_delete_label
+        deleted = delete_time_slot(int(self.slot_delete_id))
+        self.cancel_delete_slot()
+        self.load_slots()
+        if not deleted:
+            return rx.toast.info(f"{label} was already gone.")
+        return rx.toast.success(f"Removed {label}.")
 
     @rx.var
     def greeting(self) -> str:
@@ -793,6 +895,138 @@ def assignments_page() -> rx.Component:
 
 
 # ---------------------------------------------------------------------
+# 10. Study time: when the student is free each week
+# ---------------------------------------------------------------------
+
+def slot_row(slot: dict) -> rx.Component:
+    """One weekly study period with its Delete button."""
+    s = DashboardState
+    return rx.card(
+        rx.flex(
+            rx.hstack(
+                rx.box(
+                    rx.icon("clock", size=16, color=rx.color("accent", 9)),
+                    padding="2", border_radius="8px", background=rx.color("accent", 3),
+                    display="flex", align_items="center",
+                ),
+                rx.vstack(
+                    rx.text(slot["weekday"], weight="bold"),
+                    rx.text(slot["time"], size="2", color_scheme="gray"),
+                    spacing="0", align="start",
+                ),
+                spacing="3", align="center",
+            ),
+            rx.spacer(),
+            rx.hstack(
+                rx.badge(slot["hours"], variant="soft", color_scheme="gray"),
+                rx.button(rx.icon("trash_2", size=14), "Delete", size="1", variant="soft", color_scheme="red",
+                          on_click=s.ask_delete_slot(slot["id"], slot["weekday"] + " " + slot["time"])),
+                spacing="2", align="center",
+            ),
+            width="100%", align="center", wrap="wrap", spacing="3",
+        ),
+        size="2", width="100%", style=CARD_STYLE,
+    )
+
+
+def study_time_section() -> rx.Component:
+    s = DashboardState
+    return section(
+        "Study Time",
+        "Add your available study times so StudyFlow knows when to schedule your assignments.",
+        rx.vstack(
+            rx.cond(
+                s.slots.length() > 0,
+                rx.vstack(
+                    rx.grid(rx.foreach(s.slots, slot_row),
+                            columns=rx.breakpoints(initial="1", md="2"), spacing="3", width="100%"),
+                    rx.text(s.slot_hours, " hours of study time each week", size="2", color_scheme="gray"),
+                    spacing="3", width="100%", align="start",
+                ),
+                rx.card(
+                    rx.vstack(
+                        rx.icon("calendar_clock", size=28, color=rx.color("gray", 9)),
+                        rx.text("No study time added yet.", weight="medium"),
+                        spacing="2", align="center", padding_y="5",
+                    ),
+                    width="100%",
+                ),
+            ),
+            rx.button(rx.icon("plus", size=18), "Add Study Time", size="3", variant="soft",
+                      width=TAP_WIDTH, on_click=s.open_slot_form),
+            spacing="4", width="100%", align="start",
+        ),
+    )
+
+
+def slot_form() -> rx.Component:
+    """The Add Study Time dialog. Times are chosen from whole-hour lists."""
+    s = DashboardState
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.dialog.title("Add Study Time"),
+            rx.dialog.description("A weekly period when you are free to study.", size="2"),
+            rx.cond(
+                s.slot_save_error != "",
+                rx.callout(s.slot_save_error, icon="triangle_alert", color_scheme="red", size="1", margin_top="3"),
+            ),
+            rx.vstack(
+                form_field("Day",
+                           rx.select(study_time.WEEKDAYS, value=s.slot_weekday, on_change=s.set_slot_weekday,
+                                     width="100%"),
+                           s.slot_errors["weekday"]),
+                rx.grid(
+                    form_field("Start time",
+                               rx.select(study_time.START_CHOICES, value=s.slot_start, on_change=s.set_slot_start,
+                                         width="100%"),
+                               s.slot_errors["start"]),
+                    form_field("End time",
+                               rx.select(study_time.END_CHOICES, value=s.slot_end, on_change=s.set_slot_end,
+                                         width="100%"),
+                               s.slot_errors["end"]),
+                    columns=rx.breakpoints(initial="1", sm="2"), spacing="3", width="100%",
+                ),
+                rx.flex(
+                    rx.button("Cancel", variant="soft", color_scheme="gray", size="3", width=TAP_WIDTH,
+                              on_click=s.close_slot_form),
+                    rx.button(rx.icon("plus", size=18), "Add Study Time", size="3", width=TAP_WIDTH,
+                              on_click=s.submit_slot_form),
+                    spacing="3", wrap="wrap", justify="end", width="100%", padding_top="2",
+                ),
+                spacing="4", width="100%", padding_top="3",
+            ),
+            max_width="440px",
+        ),
+        open=s.slot_form_open,
+        on_open_change=s.set_slot_form_open,
+    )
+
+
+def slot_delete_dialog() -> rx.Component:
+    s = DashboardState
+    return rx.alert_dialog.root(
+        rx.alert_dialog.content(
+            rx.alert_dialog.title("Remove study time?"),
+            rx.alert_dialog.description(
+                rx.text(s.slot_delete_label, weight="bold", as_="span"),
+                " will no longer be used when planning your week.",
+                size="2",
+            ),
+            rx.flex(
+                rx.button("Cancel", variant="soft", color_scheme="gray", size="3", width=TAP_WIDTH,
+                          on_click=s.cancel_delete_slot),
+                rx.button(rx.icon("trash_2", size=18), "Remove", color_scheme="red", size="3", width=TAP_WIDTH,
+                          on_click=s.confirm_delete_slot),
+                spacing="3", wrap="wrap", justify="end", width="100%", padding_top="4",
+            ),
+            max_width="420px",
+        ),
+        open=s.slot_delete_open,
+        on_open_change=s.set_slot_delete_open,
+    )
+
+
+# ---------------------------------------------------------------------
 # Page
 # ---------------------------------------------------------------------
 
@@ -805,6 +1039,7 @@ def index() -> rx.Component:
                 overview_cards(),
                 call_to_action(),
                 upcoming_assignments(),
+                study_time_section(),
                 # Side by side on wide screens, stacked on narrow ones.
                 rx.grid(
                     todays_plan(),
@@ -816,7 +1051,9 @@ def index() -> rx.Component:
             ),
             size="4", padding_x=PAGE_PADDING_X,
         ),
-        assignment_form(),   # the dialog; invisible until form_open is True
+        assignment_form(),   # the dialogs; invisible until their open flags are True
+        slot_form(),
+        slot_delete_dialog(),
         background=rx.color("gray", 1), min_height="100vh",
     )
 
@@ -824,6 +1061,6 @@ def index() -> rx.Component:
 app = rx.App(
     theme=rx.theme(accent_color="indigo", gray_color="slate", radius="large", scaling="100%"),
 )
-app.add_page(index, title="StudyFlow", on_load=DashboardState.load_assignments)
+app.add_page(index, title="StudyFlow", on_load=DashboardState.load_data)
 app.add_page(assignments_page, route="/assignments", title="Assignments · StudyFlow",
-             on_load=DashboardState.load_assignments)
+             on_load=DashboardState.load_data)
