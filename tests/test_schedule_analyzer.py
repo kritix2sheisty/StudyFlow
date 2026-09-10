@@ -14,7 +14,14 @@ import pytest
 
 from models import Assignment, Priority, TimeSlot, Weekday
 from schedule_analyzer import (
+    STATUS_AT_RISK,
+    STATUS_COMPLETE,
+    STATUS_UNSCHEDULED,
+    analyze_assignments,
+    at_risk,
     completion_percentage,
+    format_analysis,
+    format_summary,
     total_required_hours,
     total_scheduled_hours,
     total_unscheduled_hours,
@@ -172,3 +179,117 @@ def test_only_completed_or_zero_hour_assignments_count_as_complete():
 def test_negative_estimate_counts_as_zero_required():
     assignments = [task("Odd estimate", -3), task("Physics", 2)]
     assert total_required_hours(assignments) == 2.0
+
+
+# =====================================================================
+# Assignment-level analysis (Phase 3.4)
+# =====================================================================
+
+def _brief_example():
+    """
+    The table from the Phase 3.4 brief: Physics Lab 100%, Math
+    Homework 50%, Computer Science 0%, English Essay 100%.
+    """
+    assignments = [
+        task("Physics Lab", 2),
+        task("Math Homework", 2),
+        task("Computer Science", 3),
+        task("English Essay", 1),
+    ]
+    result = ScheduleResult(
+        by_date={
+            MONDAY: [ScheduledBlock(16 * 60, 18 * 60, "Physics Lab")],
+            TUESDAY: [ScheduledBlock(16 * 60, 17 * 60, "Math Homework"),
+                      ScheduledBlock(17 * 60, 17 * 60 + 15, "Break"),
+                      ScheduledBlock(17 * 60 + 15, 18 * 60 + 15, "English Essay")],
+        },
+        unscheduled=[(assignments[1], 1.0), (assignments[2], 3.0)],
+    )
+    return result, assignments
+
+
+def test_analysis_matches_the_brief_example():
+    result, assignments = _brief_example()
+    rows = analyze_assignments(result, assignments)
+    assert [(r.assignment.name, r.percent_scheduled, r.status) for r in rows] == [
+        ("Physics Lab", 100.0, STATUS_COMPLETE),
+        ("Math Homework", 50.0, STATUS_AT_RISK),
+        ("Computer Science", 0.0, STATUS_UNSCHEDULED),
+        ("English Essay", 100.0, STATUS_COMPLETE),
+    ]
+
+
+def test_analysis_hours_follow_the_chain_from_blocks_to_remaining():
+    """Assignment -> blocks -> scheduled hours -> remaining hours."""
+    result, assignments = _brief_example()
+    math = analyze_assignments(result, assignments)[1]
+    assert math.required_hours == 2.0
+    assert math.scheduled_hours == 1.0
+    assert math.remaining_hours == 1.0
+
+
+def test_analysis_remaining_agrees_with_the_builder():
+    """The hours derived from blocks match what the builder reported."""
+    slots = [slot(Weekday.MONDAY, 16, 18), slot(Weekday.TUESDAY, 16, 18)]
+    assignments = [task("Physics", 3, priority=Priority.HIGH), task("Math", 2), task("CS", 1)]
+    result = build_schedule(assignments, slots, today=MONDAY)
+    reported = {a.name: hours for a, hours in result.unscheduled}
+    for row in analyze_assignments(result, assignments):
+        assert row.remaining_hours == pytest.approx(reported.get(row.assignment.name, 0.0))
+
+
+def test_analysis_sums_an_assignment_split_across_days():
+    slots = [slot(Weekday.MONDAY, 16, 17), slot(Weekday.TUESDAY, 16, 18)]
+    assignments = [task("Big project", 2.5)]
+    result = build_schedule(assignments, slots, today=MONDAY)
+    row = analyze_assignments(result, assignments)[0]
+    assert row.scheduled_hours == 2.5
+    assert row.status == STATUS_COMPLETE
+
+
+def test_analysis_keeps_the_order_given():
+    result, assignments = _brief_example()
+    names = [r.assignment.name for r in analyze_assignments(result, reversed(assignments))]
+    assert names == ["English Essay", "Computer Science", "Math Homework", "Physics Lab"]
+
+
+def test_analysis_skips_completed_and_treats_zero_hours_as_complete():
+    assignments = [task("Done", 4, completed=True), task("Nothing to do", 0), task("Physics", 1)]
+    result = build_schedule(assignments, [slot(Weekday.MONDAY, 16, 18)], today=MONDAY)
+    rows = analyze_assignments(result, assignments)
+    assert [r.assignment.name for r in rows] == ["Nothing to do", "Physics"]
+    assert rows[0].status == STATUS_COMPLETE
+    assert rows[0].percent_scheduled == 100.0
+
+
+def test_at_risk_lists_everything_short_of_complete():
+    result, assignments = _brief_example()
+    names = [r.assignment.name for r in at_risk(analyze_assignments(result, assignments))]
+    assert names == ["Math Homework", "Computer Science"]
+
+
+def test_format_analysis_renders_the_table():
+    result, assignments = _brief_example()
+    text = format_analysis(analyze_assignments(result, assignments))
+    lines = text.splitlines()
+    assert lines[0] == "StudyFlow Schedule Analysis"
+    assert lines[2] == "Physics Lab       100% scheduled   OK"
+    assert lines[3] == "Math Homework      50% scheduled   AT RISK"
+    assert lines[4] == "Computer Science    0% scheduled   UNSCHEDULED"
+    assert lines[5] == "English Essay     100% scheduled   OK"
+
+
+def test_format_analysis_with_nothing_active():
+    assert format_analysis([]) == "No active assignments to analyse."
+
+
+def test_format_summary_renders_the_totals():
+    result, assignments = _brief_example()
+    text = format_summary(result, assignments)
+    assert text.splitlines() == [
+        "Schedule Summary",
+        "Required:       8.0h",
+        "Scheduled:      4.0h",
+        "Unscheduled:    4.0h",
+        "Completion:    50.0%",
+    ]
