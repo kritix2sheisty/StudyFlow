@@ -45,11 +45,19 @@ RISK_INK = {risk: f"var(--{color}-11)" for risk, color in RISK_COLORS.items()}  
 
 NAV_ITEMS = ["Dashboard", "Assignments", "Schedule", "Progress"]
 
-# Shared card styling: soft surface, subtle border, gentle lift on hover.
+# Shared card styling: a subtle border that brightens on hover. No motion.
 CARD_STYLE = {
-    "transition": "transform 0.15s ease, box-shadow 0.15s ease",
-    "_hover": {"transform": "translateY(-2px)", "box_shadow": "0 8px 24px rgba(0, 0, 0, 0.12)"},
+    "border": "1px solid var(--gray-5)",
+    "transition": "border-color 0.15s ease",
+    "_hover": {"border_color": "var(--gray-8)"},
 }
+
+# Responsive helpers: phones get tighter spacing and smaller type.
+PAGE_PADDING_X = rx.breakpoints(initial="3", md="5")
+SECTION_GAP = rx.breakpoints(initial="6", md="8")
+GRID_GAP = rx.breakpoints(initial="3", md="4")
+BIG_NUMBER = rx.breakpoints(initial="6", md="8")
+TAP_WIDTH = rx.breakpoints(initial="100%", sm="auto")
 
 
 # ---------------------------------------------------------------------
@@ -132,12 +140,13 @@ def risk_badge(risk: rx.Var) -> rx.Component:
 # ---------------------------------------------------------------------
 
 def nav_link(label: str, active: bool = False) -> rx.Component:
+    """A navigation pill. The active one is solid accent so it is unmistakable."""
     return rx.link(
         label, href="#", size="2", weight="medium", underline="none",
-        color=rx.color("accent", 11) if active else rx.color("gray", 11),
-        background=rx.color("accent", 3) if active else "transparent",
+        color="white" if active else rx.color("gray", 12),
+        background=rx.color("accent", 9) if active else "transparent",
         padding_x="3", padding_y="1", border_radius="999px",
-        style={"_hover": {"background": rx.color("gray", 3)}},
+        style={} if active else {"_hover": {"background": rx.color("gray", 4)}},
     )
 
 
@@ -179,11 +188,12 @@ def welcome() -> rx.Component:
     return rx.flex(
         rx.vstack(
             eyebrow(DashboardState.today_label),
-            rx.heading(DashboardState.greeting, "! Here's your study overview.", size="8"),
+            rx.heading(DashboardState.greeting, "! Here's your study overview.",
+                       size=rx.breakpoints(initial="6", md="8")),
             rx.text(
                 "StudyFlow keeps your assignments, deadlines and free time in one place, "
                 "and turns them into a study plan you can actually follow.",
-                size="3", color_scheme="gray", max_width="40em",
+                size=rx.breakpoints(initial="2", md="3"), color_scheme="gray", max_width="40em",
             ),
             spacing="2", align="start",
         ),
@@ -196,23 +206,27 @@ def welcome() -> rx.Component:
 # ---------------------------------------------------------------------
 
 def overview_card(label: str, value: rx.Var, unit: str, hint: str, icon: str, color: str) -> rx.Component:
+    """
+    One statistic. Compact on phones (two per row, smaller number, hint
+    hidden) and roomier on desktop (four per row, hint shown).
+    """
     return rx.card(
         rx.vstack(
             rx.hstack(
                 eyebrow(label),
                 rx.spacer(),
                 rx.box(
-                    rx.icon(icon, size=18, color=rx.color(color, 9)),
-                    padding="2", border_radius="8px", background=rx.color(color, 3),
+                    rx.icon(icon, size=16, color=rx.color(color, 9)),
+                    padding="1", border_radius="6px", background=rx.color(color, 3),
                     display="flex", align_items="center",
                 ),
                 width="100%", align="center",
             ),
-            rx.heading(value, unit, size="8", line_height="1"),
-            rx.text(hint, size="1", color_scheme="gray"),
-            spacing="3", align="start", width="100%",
+            rx.heading(value, unit, size=BIG_NUMBER, line_height="1"),
+            rx.text(hint, size="1", color_scheme="gray", display=rx.breakpoints(initial="none", md="block")),
+            spacing="2", align="start", width="100%",
         ),
-        size="3", style=CARD_STYLE,
+        size=rx.breakpoints(initial="2", md="3"), style=CARD_STYLE,
     )
 
 
@@ -223,8 +237,8 @@ def overview_cards() -> rx.Component:
         overview_card("Required", o["required_hours"], "h", "of work remaining", "clock", "orange"),
         overview_card("Scheduled", o["scheduled_hours"], "h", "placed in your plan", "calendar", "green"),
         overview_card("Completion", o["completion"], "%", "of required work scheduled", "trending_up", "purple"),
-        columns=rx.breakpoints(initial="1", sm="2", lg="4"),
-        spacing="4", width="100%",
+        columns=rx.breakpoints(initial="2", lg="4"),
+        spacing=GRID_GAP, width="100%",
     )
 
 
@@ -243,12 +257,12 @@ def call_to_action() -> rx.Component:
                 spacing="1", align="start",
             ),
             rx.spacer(),
-            rx.hstack(
+            rx.flex(
                 rx.button(rx.icon("sparkles", size=18), "Generate Study Plan",
-                          size="3", on_click=DashboardState.generate_study_plan),
+                          size="3", width=TAP_WIDTH, on_click=DashboardState.generate_study_plan),
                 rx.button(rx.icon("plus", size=18), "Add Assignment",
-                          size="3", variant="soft", on_click=DashboardState.add_assignment),
-                spacing="3", wrap="wrap",
+                          size="3", width=TAP_WIDTH, variant="soft", on_click=DashboardState.add_assignment),
+                gap="3", wrap="wrap", width=TAP_WIDTH,
             ),
             width="100%", align="center", wrap="wrap", gap="4",
         ),
@@ -330,22 +344,28 @@ def upcoming_assignments() -> rx.Component:
 # ---------------------------------------------------------------------
 
 def plan_row(item: dict) -> rx.Component:
+    """
+    One block of the day. Time sits in its own fixed column so the
+    activities line up; breaks are tinted and labelled so they read
+    as rest, not as work.
+    """
     is_break = item["is_break"] == "yes"
     return rx.hstack(
-        rx.text(item["time"], size="2", color_scheme="gray", min_width="10.5em",
-                style={"font_variant_numeric": "tabular-nums"}),
+        rx.text(item["time"], size="1", weight="medium", color_scheme="gray",
+                min_width="10.5em", style={"font_variant_numeric": "tabular-nums"}),
         rx.box(
-            width="10px", height="10px", border_radius="999px",
+            width="3px", height="1.6em", border_radius="999px", flex_shrink="0",
             background=rx.cond(is_break, rx.color("gray", 6), rx.color("accent", 9)),
-            flex_shrink="0",
         ),
         rx.cond(
             is_break,
-            rx.text("Break", size="2", color_scheme="gray", style={"font_style": "italic"}),
-            rx.text(item["label"], size="3", weight="medium"),
+            rx.hstack(rx.icon("coffee", size=14, color=rx.color("gray", 10)),
+                      rx.text("Break", size="2", color_scheme="gray"), spacing="1", align="center"),
+            rx.text(item["label"], size="3", weight="bold"),
         ),
-        spacing="3", align="center", width="100%", padding_y="3",
-        border_bottom=f"1px solid {rx.color('gray', 4)}",
+        spacing="3", align="center", width="100%",
+        padding_x="3", padding_y="2", border_radius="8px",
+        background=rx.cond(is_break, rx.color("gray", 3), "transparent"),
     )
 
 
@@ -376,17 +396,24 @@ def progress_section() -> rx.Component:
         rx.card(
             rx.vstack(
                 rx.hstack(
-                    rx.heading(p["percent"], "%", size="8", line_height="1"),
+                    rx.heading(p["percent"], "%", size=BIG_NUMBER, line_height="1",
+                               color=rx.color("accent", 11)),
                     rx.text("of required study work scheduled", size="2", color_scheme="gray"),
                     spacing="3", align="end",
                 ),
                 rx.progress(value=DashboardState.progress_value, size="3", width="100%"),
                 rx.hstack(
+                    rx.text("0%", size="1", color_scheme="gray"),
+                    rx.spacer(),
+                    rx.text("100%", size="1", color_scheme="gray"),
+                    width="100%",
+                ),
+                rx.hstack(
                     progress_stat("Scheduled", p["scheduled_hours"]),
                     progress_stat("Remaining", p["remaining_hours"]),
                     spacing="8",
                 ),
-                spacing="4", align="start", width="100%",
+                spacing="3", align="start", width="100%",
             ),
             size="3", width="100%",
         ),
@@ -411,11 +438,11 @@ def index() -> rx.Component:
                     todays_plan(),
                     progress_section(),
                     columns=rx.breakpoints(initial="1", lg="2"),
-                    spacing="6", width="100%",
+                    spacing=SECTION_GAP, width="100%",
                 ),
-                spacing="8", width="100%", padding_bottom="9",
+                spacing=SECTION_GAP, width="100%", padding_bottom="9",
             ),
-            size="4", padding_x="5",
+            size="4", padding_x=PAGE_PADDING_X,
         ),
         background=rx.color("gray", 1), min_height="100vh",
     )
