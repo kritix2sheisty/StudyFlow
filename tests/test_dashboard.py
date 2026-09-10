@@ -1,39 +1,30 @@
 """
 tests/test_dashboard.py
-A smoke test for the Reflex dashboard: the module imports, the page
-builds, and the sample data has the shape the page expects. This does
-not start a browser; it catches the errors that would stop reflex run
-before it serves anything.
+A smoke test for the Reflex pages: each one builds, and the state
+exposes the vars the pages bind to. This does not start a browser;
+it catches the errors that would stop reflex run before it serves
+anything.
 """
 
-from StudyFlow import sample_data
-from StudyFlow.StudyFlow import DashboardState, app, index
+from StudyFlow.StudyFlow import DashboardState, app, assignments_page, index, schedule_page
 
 
-def test_dashboard_page_builds():
-    page = index()
-    assert page is not None
+def test_every_page_builds():
+    for page in (index, assignments_page, schedule_page):
+        assert page() is not None
     assert app is not None
 
 
-def test_sample_data_has_the_fields_the_page_reads():
-    for item in sample_data.SAMPLE_TODAY_PLAN:
-        assert set(item) == {"time", "label", "is_break"}
-    assert set(sample_data.SAMPLE_OVERVIEW) == {"assignments", "required_hours", "scheduled_hours", "completion"}
-    assert set(sample_data.SAMPLE_PROGRESS) == {"percent", "scheduled_hours", "remaining_hours"}
+def test_state_exposes_the_vars_the_pages_bind_to():
+    for name in (
+        "assignments", "assignment_count", "required_hours", "greeting", "today_label",
+        "slots", "slot_hours",
+        "has_plan", "plan_message", "plan_days", "today_plan", "plan_statuses",
+        "plan_required", "plan_scheduled", "plan_unscheduled", "plan_completion", "progress_value",
+    ):
+        assert hasattr(DashboardState, name), name
 
 
-def test_sample_data_values_are_strings():
-    rows = sample_data.SAMPLE_TODAY_PLAN + [sample_data.SAMPLE_OVERVIEW, sample_data.SAMPLE_PROGRESS]
-    for row in rows:
-        assert all(isinstance(v, str) for v in row.values())
-
-
-def test_assignments_are_not_sampled_any_more():
-    """The dashboard reads assignments from the database, not from sample data."""
-    assert not hasattr(sample_data, "SAMPLE_ASSIGNMENTS")
-
-
-def test_state_exposes_the_vars_the_page_binds_to():
-    for name in ("overview", "assignments", "today_plan", "progress", "greeting", "progress_value"):
-        assert hasattr(DashboardState, name)
+def test_no_sample_data_module_remains():
+    import importlib.util
+    assert importlib.util.find_spec("StudyFlow.sample_data") is None

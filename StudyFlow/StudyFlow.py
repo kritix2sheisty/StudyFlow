@@ -2,11 +2,13 @@
 StudyFlow/StudyFlow.py
 The StudyFlow dashboard, built with Reflex.
 
-This is the first real screen of the app. It shows SAMPLE data from
-sample_data.py so the design can be judged before the page is wired
-to the StudyFlow engine. None of the scheduling logic lives here; it
-stays in scheduler.py, schedule_builder.py, schedule_analyzer.py and
-schedule_optimizer.py, and will be reached through study_plan.py.
+Three pages: the dashboard, an Assignments page and a Schedule page.
+Assignments and study time come from the database through storage.py;
+Generate Study Plan runs the existing engine through
+study_plan.generate_study_plan() and shows the result. None of the
+scheduling logic lives here; it stays in scheduler.py,
+schedule_builder.py, schedule_analyzer.py and schedule_optimizer.py,
+and StudyFlow/plan_view.py turns the engine's result into page data.
 
 Page structure (top to bottom):
     header            logo, title, navigation pills, theme toggle
@@ -43,12 +45,10 @@ from storage import (
     update_assignment,
 )
 from StudyFlow import assignments as forms
+from StudyFlow import plan_view
 from StudyFlow import study_time
-from StudyFlow.sample_data import (
-    SAMPLE_OVERVIEW,
-    SAMPLE_PROGRESS,
-    SAMPLE_TODAY_PLAN,
-)
+from StudyFlow.plan_view import Block, Day
+from study_plan import generate_study_plan
 
 # Make sure the SQLite database and its tables exist before the first
 # assignment is added. init_db() is CREATE TABLE IF NOT EXISTS, so
@@ -57,14 +57,16 @@ init_db()
 
 # Badge and accent colours for the two labels a student scans first.
 PRIORITY_COLORS = {"HIGH": "red", "MEDIUM": "orange", "LOW": "green"}
-RISK_COLORS = {"CRITICAL RISK": "crimson", "HIGH RISK": "red", "MODERATE RISK": "orange", "LOW RISK": "green"}
+# Risk words are exactly what schedule_optimizer.risk_level() returns;
+# anything else (such as NOT RATED before a plan exists) falls to grey.
+RISK_COLORS = {"CRITICAL": "red", "HIGH": "orange", "MODERATE": "yellow", "LOW": "green"}
 RISK_BORDERS = {risk: f"4px solid var(--{color}-9)" for risk, color in RISK_COLORS.items()}
 RISK_TINTS = {risk: f"var(--{color}-3)" for risk, color in RISK_COLORS.items()}    # strip background
 RISK_INK = {risk: f"var(--{color}-11)" for risk, color in RISK_COLORS.items()}     # strip text
 
 # Navigation: label -> route. Schedule and Progress are visual only until
 # those pages exist.
-NAV_ITEMS = {"Dashboard": "/", "Assignments": "/assignments", "Schedule": "#", "Progress": "#"}
+NAV_ITEMS = {"Dashboard": "/", "Assignments": "/assignments", "Schedule": "/schedule", "Progress": "#"}
 
 # Shared card styling: a subtle border that brightens on hover. No motion.
 CARD_STYLE = {
@@ -93,12 +95,21 @@ class DashboardState(rx.State):
     """
 
     # Assignments come from the database (storage.py) and are loaded
-    # when the page opens; see load_assignments. The other three are
-    # still sample data until the scheduler is connected.
+    # when the page opens; see load_assignments.
     assignments: list[dict[str, str]] = []
-    overview: dict[str, str] = SAMPLE_OVERVIEW
-    today_plan: list[dict[str, str]] = SAMPLE_TODAY_PLAN
-    progress: dict[str, str] = SAMPLE_PROGRESS
+
+    # The generated plan, flattened by StudyFlow/plan_view.py. It lives
+    # in State until the student generates again or reloads; nothing
+    # about it is stored in the database yet.
+    has_plan: bool = False
+    plan_message: str = ""                      # why there is no plan, or what went wrong
+    plan_days: list[Day] = []
+    today_plan: list[dict[str, str]] = []
+    plan_statuses: list[dict[str, str]] = []
+    plan_required: str = "0.0"
+    plan_scheduled: str = "0.0"
+    plan_unscheduled: str = "0.0"
+    plan_completion: str = "0"
 
     def load_assignments(self):
         """Read the active assignments from the database, soonest due first."""
@@ -217,11 +228,56 @@ class DashboardState(rx.State):
 
     @rx.var
     def progress_value(self) -> int:
-        return int(self.progress["percent"])
+        return int(self.plan_completion)
 
     def generate_study_plan(self):
-        """Not connected yet. The engine hook-up is the next step."""
-        return rx.toast.info("Generating a plan will connect to the StudyFlow engine next.")
+        """
+        The whole pipeline, through the existing engine:
+
+            list_assignments() + list_time_slots()
+                -> study_plan.generate_study_plan()
+                -> plan_view (strings and lists for the page)
+
+        With no assignments or no study time there is nothing to plan,
+        so a message explains what to add. If the engine raises, the
+        dashboard stays usable and shows a plain message.
+        """
+        assignments = list_assignments(include_completed=False)
+        slots = list_time_slots()
+        self.plan_message = plan_view.guard_message(assignments, slots)
+        if self.plan_message:
+            self.has_plan = False
+            return rx.toast.warning(self.plan_message)
+
+        today = date.today()
+        try:
+            plan = generate_study_plan(assignments, slots, today=today)
+            statuses = plan_view.status_rows(plan, slots, today)
+            days = plan_view.days_of(plan)
+        except Exception:
+            self.has_plan = False
+            self.plan_message = "StudyFlow could not build a plan from that data. Please try again."
+            return rx.toast.error(self.plan_message)
+
+        self.plan_days = days
+        self.today_plan = plan_view.today_blocks(plan, today)
+        self.plan_statuses = statuses
+        numbers = plan_view.totals(plan)
+        self.plan_required = numbers["required"]
+        self.plan_scheduled = numbers["scheduled"]
+        self.plan_unscheduled = numbers["unscheduled"]
+        self.plan_completion = numbers["completion"]
+        self.has_plan = True
+
+        # Stamp the real risk onto the assignment cards.
+        risk = plan_view.risk_by_name(statuses)
+        self.assignments = [
+            {**row, "risk": risk.get(row["name"], row["risk"])} for row in self.assignments
+        ]
+
+        if plan_view.has_unscheduled(plan):
+            return rx.toast.warning(f"Plan ready. {self.plan_unscheduled}h could not fit before its due date.")
+        return rx.toast.success("Plan ready. Every assignment fits.")
 
     # ---- Add Assignment form ----
     #
@@ -505,15 +561,15 @@ def overview_card(label: str, value: rx.Var, unit: str, hint: str, icon: str, co
 
 
 def overview_cards() -> rx.Component:
-    o = DashboardState.overview
+    s = DashboardState
     return rx.grid(
-        # Count and required hours come from the assignment list, so
-        # adding an assignment updates them; the other two stay sample
-        # until the scheduler is connected.
-        overview_card("Assignments", DashboardState.assignment_count, "", "active this week", "book_open", "blue"),
-        overview_card("Required", DashboardState.required_hours, "h", "of work remaining", "clock", "orange"),
-        overview_card("Scheduled", o["scheduled_hours"], "h", "placed in your plan", "calendar", "green"),
-        overview_card("Completion", o["completion"], "%", "of required work scheduled", "trending_up", "purple"),
+        # Count and required hours come from the assignment list; the
+        # scheduled hours and completion come from the generated plan
+        # and read 0 until one exists.
+        overview_card("Assignments", s.assignment_count, "", "active this week", "book_open", "blue"),
+        overview_card("Required", s.required_hours, "h", "of work remaining", "clock", "orange"),
+        overview_card("Scheduled", s.plan_scheduled, "h", "placed in your plan", "calendar", "green"),
+        overview_card("Completion", s.plan_completion, "%", "of required work scheduled", "trending_up", "purple"),
         columns=rx.breakpoints(initial="2", lg="4"),
         spacing=GRID_GAP, width="100%",
     )
@@ -659,11 +715,29 @@ def plan_row(item: dict) -> rx.Component:
 
 
 def todays_plan() -> rx.Component:
+    s = DashboardState
     return section(
         "Today's Study Plan",
         "Your blocks for today, in order.",
         rx.card(
-            rx.vstack(rx.foreach(DashboardState.today_plan, plan_row), spacing="0", width="100%"),
+            rx.cond(
+                s.has_plan,
+                rx.cond(
+                    s.today_plan.length() > 0,
+                    rx.vstack(rx.foreach(s.today_plan, plan_row), spacing="0", width="100%"),
+                    rx.vstack(
+                        rx.text("Nothing is scheduled for today.", weight="medium"),
+                        rx.text("See the Schedule page for the rest of the week.", size="2", color_scheme="gray"),
+                        spacing="1", align="center", padding_y="4", width="100%",
+                    ),
+                ),
+                rx.vstack(
+                    rx.text("No plan yet.", weight="medium"),
+                    rx.text("Press Generate Study Plan to place your work into your study time.",
+                            size="2", color_scheme="gray"),
+                    spacing="1", align="center", padding_y="4", width="100%",
+                ),
+            ),
             size="3", width="100%",
         ),
     )
@@ -678,19 +752,19 @@ def progress_stat(label: str, value: rx.Var) -> rx.Component:
 
 
 def progress_section() -> rx.Component:
-    p = DashboardState.progress
+    s = DashboardState
     return section(
         "Progress",
         "How much of your required work has a place in the plan.",
         rx.card(
             rx.vstack(
                 rx.hstack(
-                    rx.heading(p["percent"], "%", size=BIG_NUMBER, line_height="1",
+                    rx.heading(s.plan_completion, "%", size=BIG_NUMBER, line_height="1",
                                color=rx.color("accent", 11)),
                     rx.text("of required study work scheduled", size="2", color_scheme="gray"),
                     spacing="3", align="end",
                 ),
-                rx.progress(value=DashboardState.progress_value, size="3", width="100%"),
+                rx.progress(value=s.progress_value, size="3", width="100%"),
                 rx.hstack(
                     rx.text("0%", size="1", color_scheme="gray"),
                     rx.spacer(),
@@ -698,9 +772,14 @@ def progress_section() -> rx.Component:
                     width="100%",
                 ),
                 rx.hstack(
-                    progress_stat("Scheduled", p["scheduled_hours"]),
-                    progress_stat("Remaining", p["remaining_hours"]),
-                    spacing="8",
+                    progress_stat("Required", s.plan_required),
+                    progress_stat("Scheduled", s.plan_scheduled),
+                    progress_stat("Unscheduled", s.plan_unscheduled),
+                    spacing="7", wrap="wrap",
+                ),
+                rx.cond(
+                    ~s.has_plan,
+                    rx.text("Generate a study plan to fill these in.", size="1", color_scheme="gray"),
                 ),
                 spacing="3", align="start", width="100%",
             ),
@@ -1027,6 +1106,126 @@ def slot_delete_dialog() -> rx.Component:
 
 
 # ---------------------------------------------------------------------
+# 11. Schedule page: the whole generated week, day by day
+# ---------------------------------------------------------------------
+
+def block_line(b: Block) -> rx.Component:
+    """One block of a day, with breaks styled as rest rather than work."""
+    is_break = b.is_break == "yes"
+    return rx.hstack(
+        rx.text(b.time, size="1", weight="medium", color_scheme="gray",
+                min_width="9em", style={"font_variant_numeric": "tabular-nums"}),
+        rx.box(
+            width="3px", height="1.6em", border_radius="999px", flex_shrink="0",
+            background=rx.cond(is_break, rx.color("gray", 6), rx.color("accent", 9)),
+        ),
+        rx.cond(
+            is_break,
+            rx.hstack(rx.icon("coffee", size=14, color=rx.color("gray", 10)),
+                      rx.text("Break", size="2", color_scheme="gray"), spacing="1", align="center"),
+            rx.text(b.label, size="3", weight="bold"),
+        ),
+        spacing="3", align="center", width="100%",
+        padding_x="3", padding_y="2", border_radius="8px",
+        background=rx.cond(is_break, rx.color("gray", 3), "transparent"),
+    )
+
+
+def day_card(day: Day) -> rx.Component:
+    return rx.card(
+        rx.vstack(
+            rx.heading(day.label.upper(), size="3", letter_spacing="0.04em"),
+            rx.vstack(rx.foreach(day.blocks, block_line), spacing="0", width="100%"),
+            spacing="3", align="start", width="100%",
+        ),
+        size="3", width="100%", style=CARD_STYLE,
+    )
+
+
+def status_line(row: dict) -> rx.Component:
+    """One assignment's outcome in the plan: status, hours and risk."""
+    return rx.flex(
+        rx.vstack(
+            rx.text(row["name"], weight="bold"),
+            rx.text(row["scheduled"], " / ", row["required"], "h scheduled · due ", row["due"],
+                    size="2", color_scheme="gray"),
+            spacing="0", align="start",
+        ),
+        rx.spacer(),
+        rx.hstack(
+            rx.badge(row["status"], variant="soft", radius="full",
+                     color_scheme=rx.match(row["status"], *STATUS_COLORS.items(), "gray")),
+            rx.badge("Risk: ", row["risk"], variant="solid", radius="full",
+                     color_scheme=rx.match(row["risk"], *RISK_COLORS.items(), "gray")),
+            spacing="2", wrap="wrap",
+        ),
+        width="100%", align="center", wrap="wrap", spacing="3",
+        padding_y="2", border_bottom=f"1px solid {rx.color('gray', 4)}",
+    )
+
+
+def schedule_page() -> rx.Component:
+    s = DashboardState
+    return rx.box(
+        rx.container(
+            rx.vstack(
+                header(active="Schedule"),
+                rx.flex(
+                    rx.vstack(
+                        rx.heading("Schedule", size="7"),
+                        rx.text("Your work placed into your study time, by the StudyFlow engine.",
+                                size="2", color_scheme="gray"),
+                        spacing="1", align="start",
+                    ),
+                    rx.spacer(),
+                    rx.button(rx.icon("sparkles", size=18), "Generate Study Plan", size="3", width=TAP_WIDTH,
+                              on_click=s.generate_study_plan),
+                    width="100%", align="center", wrap="wrap", spacing="4",
+                ),
+                rx.cond(
+                    s.has_plan,
+                    rx.vstack(
+                        rx.cond(
+                            s.plan_days.length() > 0,
+                            rx.grid(rx.foreach(s.plan_days, day_card),
+                                    columns=rx.breakpoints(initial="1", md="2", lg="3"),
+                                    spacing="4", width="100%"),
+                            rx.callout("Nothing could be placed before the due dates with the study time you have.",
+                                       icon="info"),
+                        ),
+                        section(
+                            "How each assignment fared",
+                            "Status from the analyzer, deadline risk from the optimizer.",
+                            rx.card(rx.vstack(rx.foreach(s.plan_statuses, status_line), spacing="0", width="100%"),
+                                    size="3", width="100%"),
+                        ),
+                        spacing=SECTION_GAP, width="100%",
+                    ),
+                    rx.card(
+                        rx.vstack(
+                            rx.icon("calendar_days", size=28, color=rx.color("gray", 9)),
+                            rx.text("No study plan yet.", weight="medium"),
+                            rx.text(rx.cond(s.plan_message != "", s.plan_message,
+                                            "Generate one and your week will appear here."),
+                                    size="2", color_scheme="gray", text_align="center"),
+                            spacing="2", align="center", padding_y="6",
+                        ),
+                        width="100%",
+                    ),
+                ),
+                spacing=SECTION_GAP, width="100%", padding_bottom="9",
+            ),
+            size="4", padding_x=PAGE_PADDING_X,
+        ),
+        background=rx.color("gray", 1), min_height="100vh",
+    )
+
+
+# Badge colours for a plan's status words.
+STATUS_COLORS = {"COMPLETE": "green", "PARTIAL": "orange", "UNSCHEDULED": "red"}
+
+
+# ---------------------------------------------------------------------
 # Page
 # ---------------------------------------------------------------------
 
@@ -1063,4 +1262,6 @@ app = rx.App(
 )
 app.add_page(index, title="StudyFlow", on_load=DashboardState.load_data)
 app.add_page(assignments_page, route="/assignments", title="Assignments · StudyFlow",
+             on_load=DashboardState.load_data)
+app.add_page(schedule_page, route="/schedule", title="Schedule · StudyFlow",
              on_load=DashboardState.load_data)
