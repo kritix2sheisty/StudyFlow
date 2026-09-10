@@ -14,7 +14,15 @@ import pytest
 
 from models import Assignment, Priority, TimeSlot, Weekday
 from schedule_builder import ScheduledBlock, ScheduleResult, build_schedule
-from schedule_optimizer import available_hours_before_deadline, deadline_risk_ratio
+from schedule_optimizer import (
+    RISK_CRITICAL,
+    RISK_HIGH,
+    RISK_LOW,
+    RISK_MODERATE,
+    available_hours_before_deadline,
+    deadline_risk_ratio,
+    risk_level,
+)
 
 MONDAY = date(2026, 8, 17)  # a known Monday
 TUESDAY = MONDAY + timedelta(days=1)
@@ -199,3 +207,70 @@ def test_ratio_uses_the_real_schedule():
     result = build_schedule([physics, math_hw], slots, today=MONDAY)
     assert deadline_risk_ratio(physics, result, slots, MONDAY) == math.inf
     assert deadline_risk_ratio(math_hw, result, slots, MONDAY) == pytest.approx(4 / 2.25)
+
+
+# =====================================================================
+# risk_level: ratio -> CRITICAL / HIGH / MODERATE / LOW
+# =====================================================================
+
+@pytest.mark.parametrize("ratio,level", [
+    (0.5, RISK_CRITICAL),
+    (1.0, RISK_HIGH),
+    (1.4, RISK_HIGH),
+    (1.5, RISK_MODERATE),
+    (1.9, RISK_MODERATE),
+    (2.0, RISK_LOW),
+    (3.0, RISK_LOW),
+])
+def test_risk_level_examples_from_the_brief(ratio, level):
+    assert risk_level(ratio) == level
+
+
+@pytest.mark.parametrize("ratio,level", [
+    (0.99, RISK_CRITICAL),   # just under: still less time than work
+    (1.0, RISK_HIGH),        # the boundary belongs to the safer side
+    (1.49, RISK_HIGH),
+    (1.5, RISK_MODERATE),
+    (1.99, RISK_MODERATE),
+    (2.0, RISK_LOW),
+])
+def test_risk_level_boundaries(ratio, level):
+    assert risk_level(ratio) == level
+
+
+def test_risk_level_zero_is_critical():
+    assert risk_level(0) == RISK_CRITICAL
+    assert risk_level(0.0) == RISK_CRITICAL
+
+
+def test_risk_level_negative_is_critical():
+    assert risk_level(-1.0) == RISK_CRITICAL
+
+
+def test_risk_level_infinite_and_huge_are_low():
+    assert risk_level(math.inf) == RISK_LOW
+    assert risk_level(1e12) == RISK_LOW
+
+
+def test_risk_level_refuses_nan():
+    with pytest.raises(ValueError):
+        risk_level(math.nan)
+
+
+def test_risk_level_is_pure():
+    """Same input, same answer, no state between calls."""
+    assert [risk_level(r) for r in (2.0, 0.5, 2.0, 0.5)] == [RISK_LOW, RISK_CRITICAL, RISK_LOW, RISK_CRITICAL]
+
+
+def test_ratio_and_level_together_on_the_brief_example():
+    """Remaining 4h, available 2h -> 0.5 -> CRITICAL; available 6h -> 1.5 -> MODERATE."""
+    physics = task("Physics", MONDAY, 6)
+    assert risk_level(deadline_risk_ratio(physics, scheduled(physics, 2), week(monday=2), MONDAY)) == RISK_CRITICAL
+    physics = task("Physics", WEDNESDAY, 6)
+    slots = week(monday=2, tuesday=2, wednesday=2)
+    assert risk_level(deadline_risk_ratio(physics, scheduled(physics, 2), slots, MONDAY)) == RISK_MODERATE
+
+
+def test_nothing_remaining_classifies_as_low_without_a_special_case():
+    done = task("Done", TUESDAY, 2)
+    assert risk_level(deadline_risk_ratio(done, scheduled(done, 2), week(monday=2), MONDAY)) == RISK_LOW

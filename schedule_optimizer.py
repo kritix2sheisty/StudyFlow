@@ -103,3 +103,44 @@ def deadline_risk_ratio(
     if remaining == 0:
         return math.inf
     return available_hours_before_deadline(assignment, time_slots, today) / remaining
+
+
+# Risk levels, from a ratio of available time to remaining work.
+RISK_CRITICAL = "CRITICAL"   # less time than work:            ratio < 1.0
+RISK_HIGH = "HIGH"           # enough, with little to spare:   1.0 <= ratio < 1.5
+RISK_MODERATE = "MODERATE"   # some room:                      1.5 <= ratio < 2.0
+RISK_LOW = "LOW"             # at least twice the time needed: ratio >= 2.0
+
+HIGH_THRESHOLD = 1.0
+MODERATE_THRESHOLD = 1.5
+LOW_THRESHOLD = 2.0
+
+
+def risk_level(ratio: float) -> str:
+    """
+    Turn a deadline risk ratio into a word a student can act on.
+
+        0.5 -> CRITICAL     1.0 -> HIGH     1.5 -> MODERATE     2.0 -> LOW
+
+    Each boundary belongs to the safer side: exactly 1.0 is HIGH, not
+    CRITICAL, because the time does cover the work; exactly 2.0 is
+    LOW.
+
+    Unusual values:
+      - 0 is CRITICAL: no time at all before the deadline.
+      - A negative ratio cannot come from deadline_risk_ratio(), but
+        less than no time is still no time, so it is CRITICAL.
+      - Infinity (nothing remaining) and any very large ratio are LOW.
+      - NaN is refused with a ValueError. Every comparison with NaN is
+        false, so it would otherwise fall through to LOW and hide a
+        bug upstream.
+    """
+    if math.isnan(ratio):
+        raise ValueError("risk ratio is NaN; the ratio calculation upstream went wrong")
+    if ratio < HIGH_THRESHOLD:
+        return RISK_CRITICAL
+    if ratio < MODERATE_THRESHOLD:
+        return RISK_HIGH
+    if ratio < LOW_THRESHOLD:
+        return RISK_MODERATE
+    return RISK_LOW
