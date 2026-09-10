@@ -78,6 +78,8 @@ module docstring of `scheduler.py`.
 * Test suite for deadlines, allocation and break behaviour (`tests/test_schedule_builder.py`)
 * Schedule quality: scheduled, unscheduled and required hours, and a completion percentage (`schedule_analyzer.py`)
 * Assignment-level analysis: hours scheduled, hours remaining and a COMPLETE / PARTIAL / UNSCHEDULED status per assignment, printed under the schedule in the CLI
+* At-risk detection: assignments that are not completed and not fully scheduled
+* One workflow: `generate_study_plan()` prioritizes, schedules, analyzes and flags in one call, and `format_study_plan()` renders the weekly report (`study_plan.py`)
 
 ### Future Development
 
