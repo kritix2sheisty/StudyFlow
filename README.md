@@ -90,10 +90,11 @@ module docstring of `scheduler.py`.
 ### Phase 4 — Intelligent Scheduling (in progress)
 
 * Time-remaining awareness: `available_hours_before_deadline()` measures the study time between today and an assignment's due date (`schedule_optimizer.py`)
+* Deadline risk ratio: `deadline_risk_ratio()` divides that available time by the hours an assignment still needs (0.5 means half the time needed; infinity means nothing left to do)
 
 ### Future Development
 
-* Risk score: hours still needed versus hours available before the deadline
+* Risk level: classify the ratio as CRITICAL / HIGH / MODERATE / LOW and show it in the report
 * Improve schedule optimization (spread work evenly, cap hours per day)
 * Add a graphical/web interface
 * Introduce AI-assisted study recommendations
