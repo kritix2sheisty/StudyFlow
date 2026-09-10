@@ -10,8 +10,8 @@ from datetime import date, datetime
 import storage
 from models import Assignment, Class, Priority, Test, TimeSlot, Weekday
 from scheduler import prioritize_assignments
-from schedule_analyzer import analyze_assignments, format_analysis, format_summary
-from schedule_builder import build_schedule, format_schedule
+from schedule_analyzer import analyze_assignments, format_analysis
+from study_plan import format_study_plan, generate_study_plan
 
 MENU = """
 ==============================
@@ -26,14 +26,15 @@ MENU = """
 7. View assignments due in the next 7 days
 8. View all tests
 9. View available time slots
-16. View prioritized assignment list
-17. Build weekly schedule
 10. Edit an assignment
 11. Delete an assignment
 12. Mark an assignment complete / incomplete
 13. Delete a class
 14. Delete a test
 15. Delete a time slot
+16. View prioritized assignment list
+17. Generate study plan
+18. View schedule analysis
 0. Exit
 """
 
@@ -205,19 +206,22 @@ def view_list(items, empty_message: str) -> None:
         print(f"  - {item}")
 
 
-def build_schedule_flow() -> None:
+def generate_study_plan_flow() -> None:
+    """The whole pipeline: prioritize, schedule, analyze, flag, report."""
     assignments = storage.list_assignments(include_completed=False)
     slots = storage.list_time_slots()
+    plan = generate_study_plan(assignments, slots)
+    print(format_study_plan(plan))
     if not slots:
-        print("No available time slots yet — add some first (option 4).")
-        return
-    result = build_schedule(assignments, slots)
-    output = format_schedule(result)
-    print(output if output else "Nothing to schedule.")
-    if assignments:
-        divider = "-" * 30
-        print(f"\n{divider}\n{format_summary(result, assignments)}\n{divider}")
-        print(format_analysis(analyze_assignments(result, assignments)))
+        print("\nNo available study time yet — add some with option 4 to get a schedule.")
+
+
+def schedule_analysis_flow() -> None:
+    """The per-assignment table: how much of each assignment is placed."""
+    assignments = storage.list_assignments(include_completed=False)
+    slots = storage.list_time_slots()
+    plan = generate_study_plan(assignments, slots)
+    print(format_analysis(analyze_assignments(plan.schedule, assignments)))
 
 
 def main() -> None:
@@ -236,7 +240,8 @@ def main() -> None:
             prioritize_assignments(storage.list_assignments()),
             "No active assignments to prioritize."
         ),
-        "17": lambda: build_schedule_flow(),
+        "17": generate_study_plan_flow,
+        "18": schedule_analysis_flow,
         "10": edit_assignment_flow,
         "11": delete_assignment_flow,
         "12": toggle_assignment_complete_flow,
