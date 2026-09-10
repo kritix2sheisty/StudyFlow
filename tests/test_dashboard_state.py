@@ -291,6 +291,90 @@ def test_cancel_delete_slot_keeps_it():
     assert state.slot_delete_open is False and len(storage.list_time_slots()) == 1
 
 
+# ---------- Generate Study Plan ----------
+
+def slot_on(days_from_today: int, start: int, end: int) -> None:
+    """Study time on the weekday that falls `days_from_today` from today."""
+    weekday = storage.Weekday((date.today() + timedelta(days=days_from_today)).weekday())
+    storage.add_time_slot(storage.TimeSlot(weekday=weekday, start_hour=start, end_hour=end))
+
+
+def test_generate_with_no_assignments_explains_and_makes_no_plan():
+    state = fresh_state()
+    slot_on(0, 16, 18)
+    state.generate_study_plan()
+    assert state.has_plan is False
+    assert "assignments" in state.plan_message
+
+
+def test_generate_with_no_study_time_explains_and_makes_no_plan():
+    state = fresh_state()
+    add_one(state)
+    state.generate_study_plan()
+    assert state.has_plan is False
+    assert "study times" in state.plan_message
+
+
+def test_generate_places_the_work_into_the_saved_study_periods():
+    """
+    The mentor's controlled example, relative to today: study time
+    today, tomorrow and the day after (4-6 PM); Math 2h due in 3
+    days; Physics 5h due in 4 days. Math takes today, Physics the
+    next two days, 1h of Physics left over.
+    """
+    state = fresh_state()
+    slot_on(0, 16, 18)
+    slot_on(1, 16, 18)
+    slot_on(2, 16, 18)
+    add_one(state, name="Math", days=3, hours="2", priority="MEDIUM")
+    add_one(state, name="Physics", days=4, hours="5", priority="HIGH")
+    state.generate_study_plan()
+
+    assert state.has_plan is True and state.plan_message == ""
+    assert [(b.label, b.time) for b in state.plan_days[0].blocks] == [("Math", "4 PM–6 PM")]
+    assert [b.label for b in state.plan_days[1].blocks] == ["Physics"]
+    assert [b.label for b in state.plan_days[2].blocks] == ["Physics"]
+    assert state.today_plan == [{"time": "4 PM–6 PM", "label": "Math", "is_break": "no"}]
+    assert (state.plan_required, state.plan_scheduled, state.plan_unscheduled, state.plan_completion) == ("7.0", "6.0", "1.0", "86")
+    assert state.progress_value == 86
+
+    by_name = {r["name"]: r for r in state.plan_statuses}
+    assert by_name["Math"]["status"] == "COMPLETE"
+    assert by_name["Physics"]["status"] == "PARTIAL" and by_name["Physics"]["remaining"] == "1.0"
+    # The assignment cards now carry the real risk instead of NOT RATED.
+    assert {r["name"]: r["risk"] for r in state.assignments} == {"Math": "LOW", "Physics": "LOW"}
+
+
+def test_generate_marks_work_that_cannot_fit_as_at_risk():
+    """Due today, 6h, only 2h of study time today: partial, critical, 33%."""
+    state = fresh_state()
+    slot_on(0, 16, 18)
+    slot_on(1, 16, 18)
+    add_one(state, name="Rush", days=0, hours="6", priority="HIGH")
+    state.generate_study_plan()
+    assert state.has_plan is True
+    row = state.plan_statuses[0]
+    assert row["status"] == "PARTIAL" and row["remaining"] == "4.0" and row["risk"] == "CRITICAL"
+    assert state.plan_completion == "33"
+    assert state.assignments[0]["risk"] == "CRITICAL"
+
+
+def test_generate_failure_keeps_the_dashboard_usable(monkeypatch):
+    import StudyFlow.StudyFlow as page
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("engine on fire")
+
+    monkeypatch.setattr(page, "generate_study_plan", boom)
+    state = fresh_state()
+    slot_on(0, 16, 18)
+    add_one(state)
+    state.generate_study_plan()
+    assert state.has_plan is False
+    assert "could not build a plan" in state.plan_message
+    assert state.assignments                       # still loaded and usable
+
+
 def test_save_failure_shows_a_message_and_keeps_the_form_open(monkeypatch):
     import StudyFlow.StudyFlow as page
 
