@@ -16,6 +16,8 @@ Page structure (top to bottom):
     upcoming          one card per assignment with priority and risk
     today's plan      the day's study blocks as a timeline
     progress          how much of the required work is scheduled
+    add assignment    a dialog; validated by StudyFlow/assignments.py,
+                      new rows are held in State (storage comes next)
 
 Design notes: due date and risk are the first things on each
 assignment card because they are what a student scans for; every
@@ -25,10 +27,11 @@ modes both work; cards lift slightly on hover to feel interactive.
 Run with:  reflex run
 """
 
-from datetime import datetime
+from datetime import date, datetime
 
 import reflex as rx
 
+from StudyFlow import assignments as forms
 from StudyFlow.sample_data import (
     SAMPLE_ASSIGNMENTS,
     SAMPLE_OVERVIEW,
@@ -97,9 +100,76 @@ class DashboardState(rx.State):
         """Not connected yet. The engine hook-up is the next step."""
         return rx.toast.info("Generating a plan will connect to the StudyFlow engine next.")
 
-    def add_assignment(self):
-        """Not connected yet."""
-        return rx.toast.info("Adding assignments is coming soon.")
+    # ---- Add Assignment form ----
+    #
+    # The form's values live here so the page can bind to them, and so
+    # Cancel can clear them. Validation and row building are delegated
+    # to StudyFlow/assignments.py, which has no Reflex in it and is
+    # unit-tested on its own.
+
+    form_open: bool = False
+    form_name: str = ""
+    form_subject: str = ""
+    form_due: str = ""
+    form_hours: str = ""
+    form_priority: str = "MEDIUM"
+    form_errors: dict[str, str] = forms.no_errors()
+
+    @rx.var
+    def assignment_count(self) -> str:
+        return str(len(self.assignments))
+
+    @rx.var
+    def required_hours(self) -> str:
+        return f"{forms.total_hours(self.assignments):g}"
+
+    # Setters the inputs bind to (Reflex 0.9 no longer generates these).
+    def set_form_name(self, value: str):
+        self.form_name = value
+
+    def set_form_subject(self, value: str):
+        self.form_subject = value
+
+    def set_form_due(self, value: str):
+        self.form_due = value
+
+    def set_form_hours(self, value: str):
+        self.form_hours = value
+
+    def set_form_priority(self, value: str):
+        self.form_priority = value
+
+    def open_form(self):
+        self.form_errors = forms.no_errors()
+        self.form_open = True
+
+    def close_form(self):
+        """Cancel: close and forget whatever was typed."""
+        self.form_open = False
+        self.form_name = ""
+        self.form_subject = ""
+        self.form_due = ""
+        self.form_hours = ""
+        self.form_priority = "MEDIUM"
+        self.form_errors = forms.no_errors()
+
+    def set_form_open(self, is_open: bool):
+        """Called when the dialog is dismissed by clicking outside or pressing Escape."""
+        if is_open:
+            self.open_form()
+        else:
+            self.close_form()
+
+    def submit_form(self):
+        """Validate; on success add the row, most urgent first, and close."""
+        values = (self.form_name, self.form_subject, self.form_due, self.form_hours, self.form_priority)
+        self.form_errors = forms.validate_form(*values)
+        if not forms.is_valid(self.form_errors):
+            return
+        row = forms.build_row(*values, today=date.today())
+        self.assignments = forms.sorted_by_urgency(self.assignments + [row])
+        self.close_form()
+        return rx.toast.success(f"Added {row['name']}.")
 
 
 # ---------------------------------------------------------------------
@@ -233,8 +303,11 @@ def overview_card(label: str, value: rx.Var, unit: str, hint: str, icon: str, co
 def overview_cards() -> rx.Component:
     o = DashboardState.overview
     return rx.grid(
-        overview_card("Assignments", o["assignments"], "", "active this week", "book_open", "blue"),
-        overview_card("Required", o["required_hours"], "h", "of work remaining", "clock", "orange"),
+        # Count and required hours come from the assignment list, so
+        # adding an assignment updates them; the other two stay sample
+        # until the scheduler is connected.
+        overview_card("Assignments", DashboardState.assignment_count, "", "active this week", "book_open", "blue"),
+        overview_card("Required", DashboardState.required_hours, "h", "of work remaining", "clock", "orange"),
         overview_card("Scheduled", o["scheduled_hours"], "h", "placed in your plan", "calendar", "green"),
         overview_card("Completion", o["completion"], "%", "of required work scheduled", "trending_up", "purple"),
         columns=rx.breakpoints(initial="2", lg="4"),
@@ -261,7 +334,7 @@ def call_to_action() -> rx.Component:
                 rx.button(rx.icon("sparkles", size=18), "Generate Study Plan",
                           size="3", width=TAP_WIDTH, on_click=DashboardState.generate_study_plan),
                 rx.button(rx.icon("plus", size=18), "Add Assignment",
-                          size="3", width=TAP_WIDTH, variant="soft", on_click=DashboardState.add_assignment),
+                          size="3", width=TAP_WIDTH, variant="soft", on_click=DashboardState.open_form),
                 gap="3", wrap="wrap", width=TAP_WIDTH,
             ),
             width="100%", align="center", wrap="wrap", gap="4",
@@ -421,6 +494,69 @@ def progress_section() -> rx.Component:
 
 
 # ---------------------------------------------------------------------
+# 8. Add Assignment form
+# ---------------------------------------------------------------------
+
+def form_field(label: str, control: rx.Component, error: rx.Var) -> rx.Component:
+    """A labelled input with its validation message underneath."""
+    return rx.vstack(
+        rx.text(label, size="2", weight="medium"),
+        control,
+        rx.cond(error != "", rx.text(error, size="1", color=rx.color("red", 11))),
+        spacing="1", align="start", width="100%",
+    )
+
+
+def assignment_form() -> rx.Component:
+    """
+    The Add Assignment dialog. Every input is bound to the State, so
+    the values survive a failed validation and Cancel can clear them.
+    """
+    s = DashboardState
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.dialog.title("Add Assignment"),
+            rx.dialog.description("Tell StudyFlow what is due and how long it will take.", size="2"),
+            rx.vstack(
+                form_field("Assignment name",
+                           rx.input(value=s.form_name, on_change=s.set_form_name,
+                                    placeholder="Mathematics IA", width="100%"),
+                           s.form_errors["name"]),
+                form_field("Subject",
+                           rx.input(value=s.form_subject, on_change=s.set_form_subject,
+                                    placeholder="Pure Mathematics", width="100%"),
+                           s.form_errors["subject"]),
+                rx.grid(
+                    form_field("Due date",
+                               rx.input(value=s.form_due, on_change=s.set_form_due, type="date", width="100%"),
+                               s.form_errors["due"]),
+                    form_field("Estimated hours",
+                               rx.input(value=s.form_hours, on_change=s.set_form_hours,
+                                        type="number", step="0.25", min="0", placeholder="1.5", width="100%"),
+                               s.form_errors["hours"]),
+                    columns=rx.breakpoints(initial="1", sm="2"), spacing="3", width="100%",
+                ),
+                form_field("Priority",
+                           rx.select(forms.PRIORITIES, value=s.form_priority, on_change=s.set_form_priority,
+                                     width="100%"),
+                           s.form_errors["priority"]),
+                rx.flex(
+                    rx.button("Cancel", variant="soft", color_scheme="gray", size="3",
+                              width=TAP_WIDTH, on_click=s.close_form),
+                    rx.button(rx.icon("plus", size=18), "Add Assignment", size="3",
+                              width=TAP_WIDTH, on_click=s.submit_form),
+                    gap="3", wrap="wrap", justify="end", width="100%", padding_top="2",
+                ),
+                spacing="4", width="100%", padding_top="3",
+            ),
+            max_width="480px",
+        ),
+        open=s.form_open,
+        on_open_change=s.set_form_open,
+    )
+
+
+# ---------------------------------------------------------------------
 # Page
 # ---------------------------------------------------------------------
 
@@ -444,6 +580,7 @@ def index() -> rx.Component:
             ),
             size="4", padding_x=PAGE_PADDING_X,
         ),
+        assignment_form(),   # the dialog; invisible until form_open is True
         background=rx.color("gray", 1), min_height="100vh",
     )
 
