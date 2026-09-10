@@ -144,15 +144,40 @@ def analyze_assignments(
     Completed assignments are skipped: the scheduler never places
     them, so there is nothing to report.
     """
-    return [
-        AssignmentAnalysis(
-            assignment=a,
-            required_hours=max(a.estimated_hours, 0.0),
-            scheduled_hours=scheduled_hours_for_assignment(result, a),
-        )
-        for a in assignments
-        if not a.completed
-    ]
+    return [analyze_assignment(result, a) for a in assignments if not a.completed]
+
+
+def analyze_assignment(result: ScheduleResult, assignment: Assignment) -> AssignmentAnalysis:
+    """
+    The chain for one assignment:
+
+        required hours -> scheduled hours -> remaining hours -> status
+
+    A completed assignment requires no study time, so it reports zero
+    required hours and comes out COMPLETE whatever the schedule holds.
+    A negative estimate counts as zero, as everywhere else.
+    """
+    required = 0.0 if assignment.completed else max(assignment.estimated_hours, 0.0)
+    return AssignmentAnalysis(
+        assignment=assignment,
+        required_hours=required,
+        scheduled_hours=scheduled_hours_for_assignment(result, assignment),
+    )
+
+
+def assignment_status(result: ScheduleResult, assignment: Assignment) -> str:
+    """
+    COMPLETE when every required hour is on the schedule, PARTIAL when
+    some are, UNSCHEDULED when none are.
+
+        Physics  required 4h, scheduled 4h    -> COMPLETE
+        Math     required 4h, scheduled 2.5h  -> PARTIAL
+        CS       required 3h, scheduled 0h    -> UNSCHEDULED
+
+    A zero-hour assignment requires no study time, so it is COMPLETE;
+    so is one already marked completed.
+    """
+    return analyze_assignment(result, assignment).status
 
 
 def format_analysis(analyses: List[AssignmentAnalysis]) -> str:
