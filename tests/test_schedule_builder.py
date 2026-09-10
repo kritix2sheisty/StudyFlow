@@ -316,6 +316,41 @@ def test_earlier_deadline_gets_time_even_when_a_bigger_task_outranks_it():
     assert any(a.name == "Exam prep" for a, _ in result.unscheduled)
 
 
+def test_earlier_deadline_is_protected():
+    """
+    Phase 3.2: does "highest priority first" always produce the best
+    schedule? The scenario from the brief, shifted two days later.
+
+    Physics is HIGH and needs 5 hours; Math is MEDIUM and needs 2.
+    Math is due a day before Physics. Only 6 hours of study time
+    exist, so the two cannot both finish: 7 hours are needed.
+
+    Why shifted: with Math due tomorrow and Physics the day after,
+    the prioritizer already ranks Math first (nothing outranks a
+    task due tomorrow), so the test would not exercise the danger.
+    With Math due Thursday and Physics Friday, the prioritizer ranks
+    Physics first (24.0 to 23.7), which is exactly the ordering that
+    would let Physics take Monday to Wednesday and leave Math 1.25
+    hours short of its deadline.
+
+    The protection is that placement orders by deadline, not by that
+    rank: Math gets Monday and finishes; Physics gets the rest and
+    the hour that does not fit is reported against Physics.
+    """
+    slots = [slot(d, 16, 18) for d in (Weekday.MONDAY, Weekday.TUESDAY, Weekday.WEDNESDAY)]
+    physics = task("Physics", FRIDAY, 5, Priority.HIGH)
+    math = task("Math", THURSDAY, 2, Priority.MEDIUM)
+    result = build_schedule([physics, math], slots, today=MONDAY)
+
+    # Math is fully scheduled before its deadline.
+    math_total = sum(minutes_of(result, d, "Math") for d in (MONDAY, TUESDAY, WEDNESDAY))
+    assert math_total == 120
+    assert not any(a.name == "Math" for a, _ in result.unscheduled)
+
+    # The shortfall lands on Physics, the one with time to spare.
+    assert result.unscheduled == [(physics, 1.0)]
+
+
 def test_same_deadline_falls_back_to_phase_2_order():
     """With equal deadlines and not enough time, priority decides who is cut."""
     slots = [slot(Weekday.MONDAY, 16, 18)]
