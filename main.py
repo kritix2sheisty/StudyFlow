@@ -10,6 +10,7 @@ from datetime import date, datetime
 import storage
 from models import Assignment, Class, Priority, Test, TimeSlot, Weekday
 from scheduler import prioritize_assignments
+from schedule_analyzer import analyze_assignments, format_analysis, format_summary
 from schedule_builder import build_schedule, format_schedule
 
 MENU = """
@@ -213,6 +214,10 @@ def build_schedule_flow() -> None:
     result = build_schedule(assignments, slots)
     output = format_schedule(result)
     print(output if output else "Nothing to schedule.")
+    if assignments:
+        divider = "-" * 30
+        print(f"\n{divider}\n{format_summary(result, assignments)}\n{divider}")
+        print(format_analysis(analyze_assignments(result, assignments)))
 
 
 def main() -> None:
