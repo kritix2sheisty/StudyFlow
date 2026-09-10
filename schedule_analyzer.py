@@ -180,6 +180,31 @@ def assignment_status(result: ScheduleResult, assignment: Assignment) -> str:
     return analyze_assignment(result, assignment).status
 
 
+def at_risk_assignments(
+    result: ScheduleResult, assignments: Iterable[Assignment]
+) -> List[Assignment]:
+    """
+    The assignments that need attention: not completed, and not fully
+    scheduled. Returned in the order given.
+
+        Completed assignment              not at risk
+        100% scheduled                    not at risk
+        Partially scheduled               AT RISK
+        0% scheduled                      AT RISK
+        Zero-hour assignment              not at risk (nothing to do)
+        Fully scheduled but due today     not at risk (the work is placed)
+
+    An overdue assignment that is not fully scheduled is at risk too:
+    the deadline being behind it makes the missing hours more urgent,
+    not less. This is the simple first rule; a later version can
+    weigh how close the deadline is against how much is missing.
+    """
+    return [
+        a for a in assignments
+        if not a.completed and assignment_status(result, a) != STATUS_COMPLETE
+    ]
+
+
 def format_analysis(analyses: List[AssignmentAnalysis]) -> str:
     """
     The per-assignment table:

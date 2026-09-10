@@ -19,6 +19,7 @@ from schedule_analyzer import (
     STATUS_UNSCHEDULED,
     analyze_assignments,
     assignment_status,
+    at_risk_assignments,
     completion_percentage,
     format_analysis,
     format_summary,
@@ -302,6 +303,67 @@ def test_status_agrees_with_analyze_assignments():
     result, physics, math, cs = _status_example()
     rows = analyze_assignments(result, [physics, math, cs])
     assert [r.status for r in rows] == [assignment_status(result, a) for a in (physics, math, cs)]
+
+
+# =====================================================================
+# at_risk_assignments: not completed + not fully scheduled
+# =====================================================================
+
+def test_partial_assignment_is_at_risk():
+    result, _, math, _ = _status_example()          # Math: 2.5 of 4 hours
+    assert at_risk_assignments(result, [math]) == [math]
+
+
+def test_unscheduled_assignment_is_at_risk():
+    result, _, _, cs = _status_example()            # CS: 0 of 3 hours
+    assert at_risk_assignments(result, [cs]) == [cs]
+
+
+def test_completed_assignment_is_not_at_risk():
+    result, _, _, _ = _status_example()
+    done = task("Handed in", 5, completed=True)     # nothing of it is scheduled
+    assert at_risk_assignments(result, [done]) == []
+
+
+def test_fully_scheduled_assignment_is_not_at_risk():
+    result, physics, _, _ = _status_example()       # Physics: 4 of 4 hours
+    assert at_risk_assignments(result, [physics]) == []
+
+
+def test_zero_hour_assignment_is_not_at_risk():
+    assert at_risk_assignments(ScheduleResult(), [task("Reading", 0)]) == []
+
+
+def test_fully_scheduled_assignment_due_today_is_not_at_risk():
+    """The deadline is today, but every hour is placed today: fine."""
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    due_today = task("Due today", 2, due=MONDAY)
+    result = build_schedule([due_today], slots, today=MONDAY)
+    assert assignment_status(result, due_today) == STATUS_COMPLETE
+    assert at_risk_assignments(result, [due_today]) == []
+
+
+def test_overdue_assignment_not_fully_scheduled_is_at_risk():
+    """A missed deadline makes the missing hours more urgent, not less."""
+    overdue = task("Overdue", 3, due=MONDAY - timedelta(days=2))
+    result = build_schedule([overdue], [slot(Weekday.MONDAY, 16, 18)], today=MONDAY)
+    assert assignment_status(result, overdue) == STATUS_PARTIAL
+    assert at_risk_assignments(result, [overdue]) == [overdue]
+
+
+def test_at_risk_keeps_order_and_mixes_all_cases():
+    """The brief's table in one list, through a real schedule."""
+    slots = [slot(Weekday.MONDAY, 16, 18), slot(Weekday.TUESDAY, 16, 18)]
+    physics = task("Physics Lab", 3, priority=Priority.HIGH)
+    math = task("Math IA", 2, priority=Priority.MEDIUM)
+    cs = task("Computer Science Project", 6, priority=Priority.LOW)
+    done = task("Essay", 4, completed=True)
+    reading = task("Reading", 0)
+    result = build_schedule([physics, math, cs, done, reading], slots, today=MONDAY)
+    assert assignment_status(result, physics) == STATUS_COMPLETE
+    assert assignment_status(result, math) == STATUS_PARTIAL
+    assert assignment_status(result, cs) == STATUS_UNSCHEDULED
+    assert at_risk_assignments(result, [physics, math, cs, done, reading]) == [math, cs]
 
 
 # =====================================================================
