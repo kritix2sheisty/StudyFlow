@@ -31,7 +31,14 @@ from datetime import date, datetime
 
 import reflex as rx
 
-from storage import add_assignment, init_db, list_assignments
+from storage import (
+    add_assignment,
+    delete_assignment,
+    init_db,
+    list_assignments,
+    mark_assignment_complete,
+    update_assignment,
+)
 from StudyFlow import assignments as forms
 from StudyFlow.sample_data import (
     SAMPLE_OVERVIEW,
@@ -51,7 +58,9 @@ RISK_BORDERS = {risk: f"4px solid var(--{color}-9)" for risk, color in RISK_COLO
 RISK_TINTS = {risk: f"var(--{color}-3)" for risk, color in RISK_COLORS.items()}    # strip background
 RISK_INK = {risk: f"var(--{color}-11)" for risk, color in RISK_COLORS.items()}     # strip text
 
-NAV_ITEMS = ["Dashboard", "Assignments", "Schedule", "Progress"]
+# Navigation: label -> route. Schedule and Progress are visual only until
+# those pages exist.
+NAV_ITEMS = {"Dashboard": "/", "Assignments": "/assignments", "Schedule": "#", "Progress": "#"}
 
 # Shared card styling: a subtle border that brightens on hover. No motion.
 CARD_STYLE = {
@@ -165,6 +174,7 @@ class DashboardState(rx.State):
         self.form_priority = "MEDIUM"
         self.form_errors = forms.no_errors()
         self.form_save_error = ""
+        self.editing_id = ""
 
     def set_form_open(self, is_open: bool):
         """Called when the dialog is dismissed by clicking outside or pressing Escape."""
@@ -176,11 +186,33 @@ class DashboardState(rx.State):
     # Set when saving to the database fails; shown at the top of the form.
     form_save_error: str = ""
 
+    # The same dialog edits an existing assignment. When editing_id is
+    # set, submit calls update_assignment() instead of add_assignment().
+    editing_id: str = ""
+
+    @rx.var
+    def is_editing(self) -> bool:
+        return self.editing_id != ""
+
+    def open_edit(self, assignment_id: str):
+        """Load the stored assignment into the form and open it in edit mode."""
+        stored = next((a for a in list_assignments() if str(a.id) == assignment_id), None)
+        if stored is None:
+            return rx.toast.error("That assignment no longer exists.")
+        self.open_form()
+        self.editing_id = assignment_id
+        self.form_name = stored.name
+        self.form_subject = stored.subject
+        self.form_due = stored.due_date.isoformat()
+        self.form_hours = f"{stored.estimated_hours:g}"
+        self.form_priority = stored.priority.name
+
     def submit_form(self):
         """
-        Validate, build a real Assignment, save it through storage.py,
-        reload the list from the database, and close. If saving fails,
-        keep the form open with a plain message instead of a traceback.
+        Validate, build a real Assignment, save it through storage.py
+        (add or update), reload the list from the database, and close.
+        If saving fails, keep the form open with a plain message
+        instead of a traceback.
         """
         values = (self.form_name, self.form_subject, self.form_due, self.form_hours, self.form_priority)
         self.form_errors = forms.validate_form(*values)
@@ -189,13 +221,56 @@ class DashboardState(rx.State):
             return
         assignment = forms.to_assignment(*values)
         try:
-            add_assignment(assignment)
+            if self.is_editing:
+                assignment.id = int(self.editing_id)
+                update_assignment(assignment)
+                message = f"Saved changes to {assignment.name}."
+            else:
+                add_assignment(assignment)
+                message = f"Added {assignment.name}."
         except Exception:
             self.form_save_error = "StudyFlow could not save that assignment. Please try again."
             return
         self.load_assignments()
         self.close_form()
-        return rx.toast.success(f"Added {assignment.name}.")
+        return rx.toast.success(message)
+
+    # ---- Complete and delete ----
+
+    def complete_assignment(self, assignment_id: str):
+        """Mark it done; it leaves the active list but stays in the database."""
+        mark_assignment_complete(int(assignment_id), True)
+        self.load_assignments()
+        return rx.toast.success("Marked complete. Nice work.")
+
+    # Delete asks first. These hold what the confirmation is about.
+    delete_open: bool = False
+    delete_id: str = ""
+    delete_name: str = ""
+
+    def ask_delete(self, assignment_id: str, name: str):
+        self.delete_id = assignment_id
+        self.delete_name = name
+        self.delete_open = True
+
+    def cancel_delete(self):
+        self.delete_open = False
+        self.delete_id = ""
+        self.delete_name = ""
+
+    def set_delete_open(self, is_open: bool):
+        """Escape or clicking outside the confirmation counts as cancel."""
+        if not is_open:
+            self.cancel_delete()
+
+    def confirm_delete(self):
+        name = self.delete_name
+        deleted = delete_assignment(int(self.delete_id))
+        self.cancel_delete()
+        self.load_assignments()
+        if not deleted:
+            return rx.toast.info(f"{name} was already gone.")
+        return rx.toast.success(f"Deleted {name}.")
 
 
 # ---------------------------------------------------------------------
@@ -235,10 +310,10 @@ def risk_badge(risk: rx.Var) -> rx.Component:
 # 1. Header
 # ---------------------------------------------------------------------
 
-def nav_link(label: str, active: bool = False) -> rx.Component:
+def nav_link(label: str, href: str, active: bool = False) -> rx.Component:
     """A navigation pill. The active one is solid accent so it is unmistakable."""
     return rx.link(
-        label, href="#", size="2", weight="medium", underline="none",
+        label, href=href, size="2", weight="medium", underline="none",
         color="white" if active else rx.color("gray", 12),
         background=rx.color("accent", 9) if active else "transparent",
         padding_x="4", padding_y="2", border_radius="999px",
@@ -247,7 +322,7 @@ def nav_link(label: str, active: bool = False) -> rx.Component:
     )
 
 
-def header() -> rx.Component:
+def header(active: str = "Dashboard") -> rx.Component:
     return rx.flex(
         rx.hstack(
             rx.box(
@@ -265,7 +340,7 @@ def header() -> rx.Component:
         rx.spacer(),
         rx.hstack(
             rx.flex(
-                *[nav_link(item, active=(item == "Dashboard")) for item in NAV_ITEMS],
+                *[nav_link(label, href, active=(label == active)) for label, href in NAV_ITEMS.items()],
                 spacing="2", wrap="wrap", align="center",
                 padding="1", border_radius="999px", background=rx.color("gray", 2),
             ),
@@ -429,7 +504,7 @@ def assignment_card(a: dict) -> rx.Component:
 def upcoming_assignments() -> rx.Component:
     return section(
         "Upcoming Assignments",
-        "What's due next, most urgent first.",
+        "What's due next, most urgent first. Edit, complete or delete them on the Assignments page.",
         rx.cond(
             DashboardState.assignments.length() > 0,
             rx.grid(
@@ -554,8 +629,13 @@ def assignment_form() -> rx.Component:
     s = DashboardState
     return rx.dialog.root(
         rx.dialog.content(
-            rx.dialog.title("Add Assignment"),
-            rx.dialog.description("Tell StudyFlow what is due and how long it will take.", size="2"),
+            rx.dialog.title(rx.cond(s.is_editing, "Edit Assignment", "Add Assignment")),
+            rx.dialog.description(
+                rx.cond(s.is_editing,
+                        "Change anything that is different now and save.",
+                        "Tell StudyFlow what is due and how long it will take."),
+                size="2",
+            ),
             rx.cond(
                 s.form_save_error != "",
                 rx.callout(s.form_save_error, icon="triangle_alert", color_scheme="red", size="1",
@@ -587,7 +667,8 @@ def assignment_form() -> rx.Component:
                 rx.flex(
                     rx.button("Cancel", variant="soft", color_scheme="gray", size="3",
                               width=TAP_WIDTH, on_click=s.close_form),
-                    rx.button(rx.icon("plus", size=18), "Add Assignment", size="3",
+                    rx.button(rx.cond(s.is_editing, rx.icon("check", size=18), rx.icon("plus", size=18)),
+                              rx.cond(s.is_editing, "Save changes", "Add Assignment"), size="3",
                               width=TAP_WIDTH, on_click=s.submit_form),
                     spacing="3", wrap="wrap", justify="end", width="100%", padding_top="2",
                 ),
@@ -597,6 +678,117 @@ def assignment_form() -> rx.Component:
         ),
         open=s.form_open,
         on_open_change=s.set_form_open,
+    )
+
+
+# ---------------------------------------------------------------------
+# 9. Assignments page: manage every active assignment
+# ---------------------------------------------------------------------
+
+def assignment_row(a: dict) -> rx.Component:
+    """One assignment with its details and the three actions."""
+    s = DashboardState
+    return rx.card(
+        rx.flex(
+            rx.vstack(
+                rx.hstack(
+                    rx.heading(a["name"], size="4", style={"overflow_wrap": "anywhere"}),
+                    priority_badge(a["priority"]),
+                    risk_badge(a["risk"]),
+                    spacing="2", align="center", wrap="wrap",
+                ),
+                rx.text(a["subject"], size="2", color_scheme="gray"),
+                rx.hstack(
+                    rx.icon("calendar", size=14, color=rx.color("gray", 10)),
+                    rx.text("Due ", a["due_pretty"], " · ", a["due"].lower(), size="2", color_scheme="gray"),
+                    rx.text("·", size="2", color_scheme="gray"),
+                    rx.icon("clock", size=14, color=rx.color("gray", 10)),
+                    rx.text(a["hours"], size="2", color_scheme="gray"),
+                    spacing="1", align="center", wrap="wrap",
+                ),
+                spacing="1", align="start",
+            ),
+            rx.spacer(),
+            rx.flex(
+                rx.button(rx.icon("pencil", size=16), "Edit", size="2", variant="soft",
+                          on_click=s.open_edit(a["id"])),
+                rx.button(rx.icon("check", size=16), "Complete", size="2", variant="soft", color_scheme="green",
+                          on_click=s.complete_assignment(a["id"])),
+                rx.button(rx.icon("trash_2", size=16), "Delete", size="2", variant="soft", color_scheme="red",
+                          on_click=s.ask_delete(a["id"], a["name"])),
+                spacing="2", wrap="wrap", align="center",
+            ),
+            width="100%", align="center", wrap="wrap", spacing="4",
+        ),
+        size="3", width="100%",
+        border_left=rx.match(a["risk"], *RISK_BORDERS.items(), "4px solid var(--gray-6)"),
+        style=CARD_STYLE,
+    )
+
+
+def delete_dialog() -> rx.Component:
+    """Ask before deleting; deleting is the one action that cannot be undone."""
+    s = DashboardState
+    return rx.alert_dialog.root(
+        rx.alert_dialog.content(
+            rx.alert_dialog.title("Delete assignment?"),
+            rx.alert_dialog.description(
+                rx.text(s.delete_name, weight="bold", as_="span"),
+                " will be removed permanently. Use Complete instead if it is done.",
+                size="2",
+            ),
+            rx.flex(
+                rx.button("Cancel", variant="soft", color_scheme="gray", size="3", width=TAP_WIDTH,
+                          on_click=s.cancel_delete),
+                rx.button(rx.icon("trash_2", size=18), "Delete", color_scheme="red", size="3", width=TAP_WIDTH,
+                          on_click=s.confirm_delete),
+                spacing="3", wrap="wrap", justify="end", width="100%", padding_top="4",
+            ),
+            max_width="420px",
+        ),
+        open=s.delete_open,
+        on_open_change=s.set_delete_open,
+    )
+
+
+def assignments_page() -> rx.Component:
+    s = DashboardState
+    return rx.box(
+        rx.container(
+            rx.vstack(
+                header(active="Assignments"),
+                rx.flex(
+                    rx.vstack(
+                        rx.heading("Assignments", size="7"),
+                        rx.text(s.assignment_count, " active · ", s.required_hours, "h of work",
+                                size="2", color_scheme="gray"),
+                        spacing="1", align="start",
+                    ),
+                    rx.spacer(),
+                    rx.button(rx.icon("plus", size=18), "Add Assignment", size="3", width=TAP_WIDTH,
+                              on_click=s.open_form),
+                    width="100%", align="center", wrap="wrap", spacing="4",
+                ),
+                rx.cond(
+                    s.assignments.length() > 0,
+                    rx.vstack(rx.foreach(s.assignments, assignment_row), spacing="3", width="100%"),
+                    rx.card(
+                        rx.vstack(
+                            rx.icon("inbox", size=28, color=rx.color("gray", 9)),
+                            rx.text("No upcoming assignments.", weight="medium"),
+                            rx.button(rx.icon("plus", size=18), "Add Assignment", size="3", on_click=s.open_form),
+                            spacing="3", align="center", padding_y="6",
+                        ),
+                        width="100%",
+                    ),
+                ),
+                spacing=SECTION_GAP, width="100%", padding_bottom="9",
+            ),
+            size="4", padding_x=PAGE_PADDING_X,
+        ),
+        assignment_form(),
+        delete_dialog(),
+        background=rx.color("gray", 1), min_height="100vh",
     )
 
 
@@ -633,3 +825,5 @@ app = rx.App(
     theme=rx.theme(accent_color="indigo", gray_color="slate", radius="large", scaling="100%"),
 )
 app.add_page(index, title="StudyFlow", on_load=DashboardState.load_assignments)
+app.add_page(assignments_page, route="/assignments", title="Assignments · StudyFlow",
+             on_load=DashboardState.load_assignments)

@@ -39,6 +39,8 @@ def test_valid_assignment_builds_the_dashboard_row():
         "name": "Chemistry Lab",
         "subject": "Chemistry",
         "due": "Due in 6 days",
+        "due_date": "2026-09-15",
+        "due_pretty": "15 Sep 2026",
         "due_in_days": "6",
         "hours": "2.5 hours",
         "priority": "HIGH",

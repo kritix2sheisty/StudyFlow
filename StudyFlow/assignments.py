@@ -116,6 +116,8 @@ def row_from_assignment(a: Assignment, today: date) -> Dict[str, str]:
         "name": a.name,
         "subject": a.subject,
         "due": due_in_words(days),
+        "due_date": a.due_date.isoformat(),               # for editing
+        "due_pretty": a.due_date.strftime("%d %b %Y"),   # "12 Sep 2026", for reading
         "due_in_days": str(max(days, 0)),
         "hours": hours_in_words(a.estimated_hours),
         "priority": a.priority.name,
