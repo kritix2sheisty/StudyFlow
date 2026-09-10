@@ -76,6 +76,7 @@ module docstring of `scheduler.py`.
 * Insert breaks between study periods
 * Report any work that could not fit before its due date
 * Test suite for deadlines, allocation and break behaviour (`tests/test_schedule_builder.py`)
+* Schedule quality: scheduled, unscheduled and required hours, and a completion percentage (`schedule_analyzer.py`)
 
 ### Future Development
 
