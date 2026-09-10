@@ -77,9 +77,15 @@ module docstring of `scheduler.py`.
 * Report any work that could not fit before its due date
 * Test suite for deadlines, allocation and break behaviour (`tests/test_schedule_builder.py`)
 * Schedule quality: scheduled, unscheduled and required hours, and a completion percentage (`schedule_analyzer.py`)
-* Assignment-level analysis: hours scheduled, hours remaining and a COMPLETE / PARTIAL / UNSCHEDULED status per assignment (CLI option 18, View schedule analysis)
+* Assignment-level analysis: hours scheduled, hours remaining and a COMPLETE / PARTIAL / UNSCHEDULED status per assignment (CLI: View schedule analysis)
 * At-risk detection: assignments that are not completed and not fully scheduled
-* One workflow: `generate_study_plan()` prioritizes, schedules, analyzes and flags in one call, and `format_study_plan()` renders the weekly report (`study_plan.py`; CLI option 17, Generate study plan)
+* One workflow: `generate_study_plan()` prioritizes, schedules, analyzes and flags in one call, and `format_study_plan()` renders the weekly report (`study_plan.py`; CLI: Generate study plan)
+
+### Phase 3 milestone — End-to-end workflow
+
+* `python main.py` opens a grouped menu: manage classes, assignments, tests and study time, then
+  **Generate study plan** runs the whole pipeline and prints the weekly report
+* Scripted end-to-end test drives the menus like a student would (`tests/test_main.py`)
 
 ### Future Development
 
