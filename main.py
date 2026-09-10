@@ -13,30 +13,10 @@ from scheduler import prioritize_assignments
 from schedule_analyzer import analyze_assignments, format_analysis
 from study_plan import format_study_plan, generate_study_plan
 
-MENU = """
-==============================
-   StudyFlow — CLI
-==============================
-1. Add a class
-2. Add an assignment
-3. Add a test
-4. Add available study time
-5. View all classes
-6. View all assignments
-7. View assignments due in the next 7 days
-8. View all tests
-9. View available time slots
-10. Edit an assignment
-11. Delete an assignment
-12. Mark an assignment complete / incomplete
-13. Delete a class
-14. Delete a test
-15. Delete a time slot
-16. View prioritized assignment list
-17. Generate study plan
-18. View schedule analysis
-0. Exit
-"""
+BANNER = """
+=============================
+        STUDYFLOW
+============================="""
 
 
 def prompt_date(label: str) -> date:
@@ -224,43 +204,79 @@ def schedule_analysis_flow() -> None:
     print(format_analysis(analyze_assignments(plan.schedule, assignments)))
 
 
-def main() -> None:
-    storage.init_db()
-    actions = {
-        "1": add_class_flow,
-        "2": add_assignment_flow,
-        "3": add_test_flow,
-        "4": add_time_slot_flow,
-        "5": lambda: view_list(storage.list_classes(), "No classes yet."),
-        "6": lambda: view_list(storage.list_assignments(), "No assignments yet."),
-        "7": lambda: view_list(storage.upcoming_assignments(7), "Nothing due in the next 7 days."),
-        "8": lambda: view_list(storage.list_tests(), "No tests yet."),
-        "9": lambda: view_list(storage.list_time_slots(), "No time slots yet."),
-        "16": lambda: view_list(
-            prioritize_assignments(storage.list_assignments()),
-            "No active assignments to prioritize."
-        ),
-        "17": generate_study_plan_flow,
-        "18": schedule_analysis_flow,
-        "10": edit_assignment_flow,
-        "11": delete_assignment_flow,
-        "12": toggle_assignment_complete_flow,
-        "13": delete_class_flow,
-        "14": delete_test_flow,
-        "15": delete_time_slot_flow,
-    }
-
+def run_menu(title: str, options: dict, back_label: str = "Back") -> None:
+    """
+    Show a numbered menu and run the chosen action until the user
+    picks 0. `options` maps a key to (label, action).
+    """
     while True:
-        print(MENU)
+        print(title)
+        for key, (label, _) in options.items():
+            print(f"{key}. {label}")
+        print(f"0. {back_label}")
         choice = input("Choose an option: ").strip()
         if choice == "0":
-            print("Goodbye!")
-            break
-        action = actions.get(choice)
-        if action:
-            action()
+            return
+        entry = options.get(choice)
+        if entry:
+            entry[1]()
         else:
             print("Invalid option, try again.")
+
+
+def manage_classes() -> None:
+    run_menu("\nMANAGE CLASSES", {
+        "1": ("Add a class", add_class_flow),
+        "2": ("View all classes", lambda: view_list(storage.list_classes(), "No classes yet.")),
+        "3": ("Delete a class", delete_class_flow),
+    })
+
+
+def manage_assignments() -> None:
+    run_menu("\nMANAGE ASSIGNMENTS", {
+        "1": ("Add an assignment", add_assignment_flow),
+        "2": ("View all assignments", lambda: view_list(storage.list_assignments(), "No assignments yet.")),
+        "3": ("View assignments due in the next 7 days",
+              lambda: view_list(storage.upcoming_assignments(7), "Nothing due in the next 7 days.")),
+        "4": ("View prioritized assignment list",
+              lambda: view_list(prioritize_assignments(storage.list_assignments()),
+                                "No active assignments to prioritize.")),
+        "5": ("Edit an assignment", edit_assignment_flow),
+        "6": ("Mark an assignment complete / incomplete", toggle_assignment_complete_flow),
+        "7": ("Delete an assignment", delete_assignment_flow),
+    })
+
+
+def manage_tests() -> None:
+    run_menu("\nMANAGE TESTS", {
+        "1": ("Add a test", add_test_flow),
+        "2": ("View all tests", lambda: view_list(storage.list_tests(), "No tests yet.")),
+        "3": ("Delete a test", delete_test_flow),
+    })
+
+
+def manage_study_time() -> None:
+    run_menu("\nMANAGE STUDY TIME", {
+        "1": ("Add available study time", add_time_slot_flow),
+        "2": ("View available time slots", lambda: view_list(storage.list_time_slots(), "No time slots yet.")),
+        "3": ("Delete a time slot", delete_time_slot_flow),
+    })
+
+
+MAIN_MENU = {
+    "1": ("Manage classes", manage_classes),
+    "2": ("Manage assignments", manage_assignments),
+    "3": ("Manage tests", manage_tests),
+    "4": ("Manage study time", manage_study_time),
+    "5": ("Generate study plan", generate_study_plan_flow),
+    "6": ("View schedule analysis", schedule_analysis_flow),
+}
+
+
+def main() -> None:
+    storage.init_db()
+    run_menu(BANNER, MAIN_MENU, back_label="Exit")
+    print("Goodbye!")
 
 
 if __name__ == "__main__":

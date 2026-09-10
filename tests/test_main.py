@@ -1,10 +1,11 @@
 """
 tests/test_main.py
-Pytest suite for the CLI flows that run the StudyFlow pipeline.
+Pytest suite for the CLI.
 
 The CLI reads from storage and prints, so these tests point storage
-at a fresh temporary database, add real rows through it, run the
-flow, and read what was printed.
+at a fresh temporary database, add rows through the real storage
+layer or through the menus themselves, run a flow or the whole
+program with scripted answers, and read what was printed.
 """
 
 from datetime import date, timedelta
@@ -23,6 +24,19 @@ def temp_db(tmp_path):
     yield
 
 
+def scripted_input(monkeypatch, answers):
+    """Replace input() with a script; fail loudly if the script runs dry."""
+    it = iter(answers)
+
+    def fake_input(prompt=""):
+        try:
+            return next(it)
+        except StopIteration:
+            raise AssertionError(f"CLI asked for more input after the script ended: {prompt!r}")
+
+    monkeypatch.setattr("builtins.input", fake_input)
+
+
 def add_week_of_work():
     """Two 2-hour slots this week and 7 hours of work, one item done."""
     today = date.today()
@@ -38,11 +52,7 @@ def add_week_of_work():
                                       estimated_hours=4, completed=True))
 
 
-def test_menu_offers_generate_study_plan_and_analysis():
-    assert "17. Generate study plan" in main.MENU
-    assert "18. View schedule analysis" in main.MENU
-    assert "Build weekly schedule" not in main.MENU
-
+# ---------- The two pipeline flows ----------
 
 def test_generate_study_plan_flow_prints_the_full_report(capsys):
     add_week_of_work()
@@ -88,3 +98,59 @@ def test_schedule_analysis_flow_prints_the_per_assignment_table(capsys):
 def test_schedule_analysis_flow_with_no_assignments(capsys):
     main.schedule_analysis_flow()
     assert "No active assignments to analyse." in capsys.readouterr().out
+
+
+# ---------- The menus ----------
+
+def test_main_menu_lists_the_six_areas_and_exits(monkeypatch, capsys):
+    scripted_input(monkeypatch, ["0"])
+    main.main()
+    out = capsys.readouterr().out
+    for line in ("1. Manage classes", "2. Manage assignments", "3. Manage tests",
+                 "4. Manage study time", "5. Generate study plan", "6. View schedule analysis",
+                 "0. Exit"):
+        assert line in out
+    assert out.rstrip().endswith("Goodbye!")
+
+
+def test_invalid_choice_is_rejected_and_the_menu_returns(monkeypatch, capsys):
+    scripted_input(monkeypatch, ["9", "0"])
+    main.main()
+    assert "Invalid option, try again." in capsys.readouterr().out
+
+
+def test_submenu_returns_to_the_main_menu(monkeypatch, capsys):
+    scripted_input(monkeypatch, ["1", "2", "0", "0"])   # classes -> view -> back -> exit
+    main.main()
+    out = capsys.readouterr().out
+    assert "MANAGE CLASSES" in out
+    assert "No classes yet." in out
+    assert out.count("1. Manage classes") == 2        # main menu shown before and after
+
+
+def test_end_to_end_a_student_enters_data_and_generates_a_plan(monkeypatch, capsys):
+    """
+    The manual test from the brief, scripted: add study time, add an
+    assignment through the menus, generate the plan, exit.
+    """
+    today = date.today()
+    weekday = Weekday(today.weekday()).name.lower()
+    due = (today + timedelta(days=2)).isoformat()
+    scripted_input(monkeypatch, [
+        "4", "1", weekday, "16", "18", "0",                 # study time: today 4-6 PM
+        "2", "1", "Physics", "Physics", due, "3", "3", "0",  # assignment: 3h, HIGH
+        "5",                                                 # generate study plan
+        "6",                                                 # view schedule analysis
+        "0",                                                 # exit
+    ])
+    main.main()
+    out = capsys.readouterr().out
+    assert "Added time slot." in out
+    assert "Added assignment: Physics" in out
+    assert "WEEKLY STUDY PLAN" in out
+    assert "4 PM–6 PM  Physics" in out
+    assert "Required work:      3.0h" in out
+    assert "Scheduled work:     2.0h" in out
+    assert "Physics\n1.0h remaining" in out
+    assert "67% scheduled   PARTIAL" in out
+    assert out.rstrip().endswith("Goodbye!")
