@@ -12,15 +12,15 @@ Hours everywhere are floats: 90 minutes is 1.5.
 """
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List
+from typing import Iterable, List
 
 from models import Assignment
 from schedule_builder import BREAK_LABEL, ScheduleResult
 
 # Assignment-level status. Plain strings rather than emoji so the CLI
 # report prints the same on every console.
-STATUS_COMPLETE = "OK"            # every required hour is on the schedule
-STATUS_AT_RISK = "AT RISK"        # some hours are on the schedule, not all
+STATUS_COMPLETE = "COMPLETE"        # every required hour is on the schedule
+STATUS_PARTIAL = "PARTIAL"          # some hours are on the schedule, not all
 STATUS_UNSCHEDULED = "UNSCHEDULED"  # none of it is
 
 
@@ -107,18 +107,33 @@ class AssignmentAnalysis:
         if self.remaining_hours == 0:
             return STATUS_COMPLETE
         if self.scheduled_hours > 0:
-            return STATUS_AT_RISK
+            return STATUS_PARTIAL
         return STATUS_UNSCHEDULED
 
 
-def scheduled_hours_by_name(result: ScheduleResult) -> Dict[str, float]:
-    """Hours of work per label on the schedule, breaks excluded."""
-    minutes: Dict[str, int] = {}
-    for blocks in result.by_date.values():
-        for block in blocks:
-            if block.label != BREAK_LABEL:
-                minutes[block.label] = minutes.get(block.label, 0) + (block.end_minute - block.start_minute)
-    return {name: m / 60 for name, m in minutes.items()}
+def scheduled_hours_for_assignment(result: ScheduleResult, assignment: Assignment) -> float:
+    """
+    Find every scheduled block belonging to this assignment and add
+    their durations together, in hours.
+
+        Monday     Physics  1.5h
+        Tuesday    Physics  2.0h
+        Wednesday  Math     1.0h
+
+        scheduled_hours_for_assignment(result, physics) -> 3.5
+
+    Breaks are never counted, even for an assignment that happens to
+    be called "Break", and blocks belonging to other assignments are
+    never counted. A block belongs to an assignment when its label is
+    the assignment's name.
+    """
+    minutes = sum(
+        block.end_minute - block.start_minute
+        for blocks in result.by_date.values()
+        for block in blocks
+        if block.label == assignment.name and block.label != BREAK_LABEL
+    )
+    return minutes / 60
 
 
 def analyze_assignments(
@@ -129,29 +144,23 @@ def analyze_assignments(
     Completed assignments are skipped: the scheduler never places
     them, so there is nothing to report.
     """
-    scheduled = scheduled_hours_by_name(result)
     return [
         AssignmentAnalysis(
             assignment=a,
             required_hours=max(a.estimated_hours, 0.0),
-            scheduled_hours=scheduled.get(a.name, 0.0),
+            scheduled_hours=scheduled_hours_for_assignment(result, a),
         )
         for a in assignments
         if not a.completed
     ]
 
 
-def at_risk(analyses: Iterable[AssignmentAnalysis]) -> List[AssignmentAnalysis]:
-    """Every assignment that is not fully scheduled, at risk or worse."""
-    return [x for x in analyses if x.status != STATUS_COMPLETE]
-
-
 def format_analysis(analyses: List[AssignmentAnalysis]) -> str:
     """
     The per-assignment table:
 
-        Physics Lab        100% scheduled   OK
-        Math Homework       50% scheduled   AT RISK
+        Physics Lab        100% scheduled   COMPLETE
+        Math Homework       50% scheduled   PARTIAL
         Computer Science     0% scheduled   UNSCHEDULED
     """
     if not analyses:
