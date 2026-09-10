@@ -147,7 +147,7 @@ packaging.
 
 * Python
 * SQLite
-* Streamlit *(planned/under development)*
+* Reflex *(planned/under development)*
 * Algorithms and data structures
 * AI/LLM integration *(future phase)*
 
