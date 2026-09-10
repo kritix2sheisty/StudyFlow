@@ -259,14 +259,24 @@ def _sort_days(result: ScheduleResult) -> None:
         blocks.sort(key=lambda b: b.start_minute)
 
 
-def format_schedule(result: ScheduleResult) -> str:
-    """Render a ScheduleResult as readable text, grouped by day."""
+def format_timetable(result: ScheduleResult, day_format: str = "%A %Y-%m-%d") -> str:
+    """Render just the day-by-day blocks, one heading per day."""
     lines: List[str] = []
     for day in sorted(result.by_date):
-        lines.append(day.strftime("%A %Y-%m-%d"))
+        lines.append(day.strftime(day_format))
         for b in result.by_date[day]:
             lines.append(f"  {b.format_time_range()}  {b.label}")
         lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def format_schedule(result: ScheduleResult) -> str:
+    """Render a ScheduleResult as readable text: the timetable, then
+    whatever could not be fitted."""
+    lines: List[str] = []
+    timetable = format_timetable(result)
+    if timetable:
+        lines.extend([timetable, ""])
 
     if result.unscheduled:
         lines.append("Could not fit on or before the due date:")
