@@ -87,9 +87,13 @@ module docstring of `scheduler.py`.
   **Generate study plan** runs the whole pipeline and prints the weekly report
 * Scripted end-to-end test drives the menus like a student would (`tests/test_main.py`)
 
+### Phase 4 — Intelligent Scheduling (in progress)
+
+* Time-remaining awareness: `available_hours_before_deadline()` measures the study time between today and an assignment's due date (`schedule_optimizer.py`)
+
 ### Future Development
 
-* Detect scheduling conflicts
+* Risk score: hours still needed versus hours available before the deadline
 * Improve schedule optimization (spread work evenly, cap hours per day)
 * Add a graphical/web interface
 * Introduce AI-assisted study recommendations
