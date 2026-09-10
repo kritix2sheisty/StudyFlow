@@ -77,7 +77,7 @@ module docstring of `scheduler.py`.
 * Report any work that could not fit before its due date
 * Test suite for deadlines, allocation and break behaviour (`tests/test_schedule_builder.py`)
 * Schedule quality: scheduled, unscheduled and required hours, and a completion percentage (`schedule_analyzer.py`)
-* Assignment-level analysis: hours scheduled, hours remaining and an OK / AT RISK / UNSCHEDULED status per assignment, printed under the schedule in the CLI
+* Assignment-level analysis: hours scheduled, hours remaining and a COMPLETE / PARTIAL / UNSCHEDULED status per assignment, printed under the schedule in the CLI
 
 ### Future Development
 
