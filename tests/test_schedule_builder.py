@@ -7,7 +7,9 @@ the Phase 3 review: deadlines (never place work after its due date),
 allocation that respects deadlines rather than only priority order,
 and break behaviour at the edges of a slot. Part 4 is the v1.1
 achievable-first rule: within one due date, work that can still be
-finished is placed before work that cannot.
+finished is placed before work that cannot. Part 5 is the v1.1
+break-aware chunk floor: a chunk placed after a break is at least as
+long as the break.
 """
 
 from datetime import date, timedelta
@@ -17,6 +19,7 @@ import pytest
 from models import Assignment, Priority, TimeSlot, Weekday
 from schedule_analyzer import assignment_status
 from schedule_builder import (
+    BREAK_LABEL,
     ScheduledBlock,
     ScheduleResult,
     _can_schedule_on,
@@ -715,4 +718,142 @@ def test_overdue_impossible_task_does_not_starve_work_due_today():
     assert status_of(result, quiz) == "COMPLETE"
     assert minutes_of(result, MONDAY, "Late essay") == 45
     assert unscheduled_of(result) == {"Late essay": 19.25}
+    assert_no_overlaps(result)
+
+
+# =====================================================================
+# Part 5 — break-aware chunk floor (v1.1)
+# =====================================================================
+#
+# A block that already holds work is reused only if it has room for
+# the break plus at least a break's worth of study after it. A full
+# 15-minute break is never paid for a 1-to-14-minute session. The
+# floor uses the break length itself; there is no separate minimum
+# session setting, and the first chunk in an empty block is not
+# subject to it.
+
+def assert_no_short_session_after_a_break(result: ScheduleResult, break_minutes: int) -> None:
+    for day, blocks in result.by_date.items():
+        for previous, current in zip(blocks, blocks[1:]):
+            if previous.label == BREAK_LABEL:
+                length = current.end_minute - current.start_minute
+                assert length >= break_minutes, (
+                    f"{day}: {length}-minute {current.label} session after a break"
+                )
+
+
+def test_a_chunk_after_a_break_is_at_least_as_long_as_the_break():
+    """
+    Long 1h44 leaves 16 minutes of a 2h block. Before the floor that
+    became a 15-minute break and a 1-minute Tail session. Now the
+    block is not reused: no break, the 16 minutes stay idle, and the
+    whole of Tail is flagged.
+    """
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    long_task = task("Long", TUESDAY, 104 / 60, Priority.HIGH)
+    tail = task("Tail", TUESDAY, 0.25)
+    result = build_schedule([long_task, tail], slots, today=MONDAY, break_minutes=15)
+
+    assert labels(result, MONDAY) == ["Long"]
+    assert minutes_of(result, MONDAY, "Long") == 104
+    assert minutes_of(result, MONDAY, "Tail") == 0
+    assert result.by_date[MONDAY][-1].end_minute == 18 * 60 - 16      # 16 idle minutes
+    assert result.unscheduled == [(tail, 0.25)]
+    assert_no_short_session_after_a_break(result, 15)
+
+
+def test_exactly_break_plus_break_is_reused():
+    """Long 1h30 leaves 30 minutes: a 15-minute break and a 15-minute Tail, exactly the floor."""
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    long_task = task("Long", TUESDAY, 1.5, Priority.HIGH)
+    tail = task("Tail", TUESDAY, 0.25)
+    result = build_schedule([long_task, tail], slots, today=MONDAY, break_minutes=15)
+
+    assert labels(result, MONDAY) == ["Long", "Break", "Tail"]
+    assert [b.end_minute - b.start_minute for b in result.by_date[MONDAY]] == [90, 15, 15]
+    assert result.unscheduled == []
+    assert_no_overlaps(result)
+
+
+def test_after_break_floor_does_not_apply_to_the_first_chunk():
+    """A 10-minute task alone in an empty 2h block is scheduled; the floor is about breaks, not sessions."""
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    ten_minutes = task("Ten minutes", TUESDAY, 10 / 60)
+    result = build_schedule([ten_minutes], slots, today=MONDAY)
+
+    assert labels(result, MONDAY) == ["Ten minutes"]
+    assert minutes_of(result, MONDAY, "Ten minutes") == 10
+    assert result.unscheduled == []
+
+
+def test_zero_break_inserts_no_break_entry():
+    """With break_minutes=0 two tasks sit back to back and no Break entry, zero-length or otherwise, exists."""
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    first = task("First", TUESDAY, 1, Priority.HIGH)
+    second = task("Second", TUESDAY, 1, Priority.LOW)
+    result = build_schedule([first, second], slots, today=MONDAY, break_minutes=0)
+
+    assert labels(result, MONDAY) == ["First", "Second"]
+    a, b = result.by_date[MONDAY]
+    assert (a.start_minute, a.end_minute) == (16 * 60, 17 * 60)
+    assert (b.start_minute, b.end_minute) == (17 * 60, 18 * 60)
+    assert result.unscheduled == []
+    for blocks in result.by_date.values():
+        assert all(x.label != BREAK_LABEL for x in blocks)
+        assert all(x.end_minute > x.start_minute for x in blocks)
+    assert_no_overlaps(result)
+
+
+def test_floor_scales_with_break_minutes():
+    """With a 10-minute break, 19 free minutes are not reused and 20 are: break 10 plus study 10."""
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    tail = task("Tail", TUESDAY, 10 / 60)
+
+    nineteen_left = task("Long", TUESDAY, 101 / 60, Priority.HIGH)
+    result = build_schedule([nineteen_left, tail], slots, today=MONDAY, break_minutes=10)
+    assert labels(result, MONDAY) == ["Long"]
+    assert result.unscheduled == [(tail, 10 / 60)]
+
+    twenty_left = task("Long", TUESDAY, 100 / 60, Priority.HIGH)
+    result = build_schedule([twenty_left, tail], slots, today=MONDAY, break_minutes=10)
+    assert labels(result, MONDAY) == ["Long", "Break", "Tail"]
+    assert [b.end_minute - b.start_minute for b in result.by_date[MONDAY]] == [100, 10, 10]
+    assert result.unscheduled == []
+    assert_no_short_session_after_a_break(result, 10)
+
+
+def test_demo_week_has_no_short_session_after_a_break():
+    """
+    The end-to-end demo week (weekdays 4-6 PM, Saturday 10-1,
+    Sunday 2-5) with Pure Math Practice at 1h44 instead of 2h. Before
+    the floor, Wednesday was Pure Math 104 minutes, a 15-minute break,
+    then a 1-minute Biology Lab session. Now Wednesday ends after Pure
+    Math, Biology takes all of Thursday, and no break anywhere in the
+    week is followed by a session shorter than the break. Every
+    assignment still finishes.
+
+    The demo's other short chunk, the last 15 minutes of Computer
+    Science on Monday, is the FIRST chunk of an otherwise empty block.
+    The floor is about breaks and leaves it alone; whether a session
+    may be that short at all is a separate decision.
+    """
+    wednesday = date(2026, 9, 9)
+    slots = [slot(d, 16, 18) for d in (Weekday.MONDAY, Weekday.TUESDAY, Weekday.WEDNESDAY,
+                                       Weekday.THURSDAY, Weekday.FRIDAY)]
+    slots += [slot(Weekday.SATURDAY, 10, 13), slot(Weekday.SUNDAY, 14, 17)]
+    due = lambda days: wednesday + timedelta(days=days)
+    assignments = [
+        task("Mathematics IA", due(4), 3, Priority.HIGH),
+        task("Computer Science Project", due(6), 5, Priority.HIGH),
+        task("Biology Lab", due(3), 2, Priority.MEDIUM),
+        task("French Assignment", due(7), 1, Priority.LOW),
+        task("Pure Math Practice", due(2), 104 / 60, Priority.HIGH),
+    ]
+    result = build_schedule(assignments, slots, today=wednesday, break_minutes=15)
+
+    assert labels(result, wednesday) == ["Pure Math Practice"]
+    assert minutes_of(result, wednesday, "Biology Lab") == 0
+    assert minutes_of(result, wednesday + timedelta(days=1), "Biology Lab") == 120
+    assert result.unscheduled == []
+    assert_no_short_session_after_a_break(result, 15)
     assert_no_overlaps(result)

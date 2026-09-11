@@ -31,8 +31,9 @@ guaranteed to be the best possible schedule (see "Limitations").
      date limit: its deadline is gone, so it simply goes as early as
      possible.
   5. Between two chunks of work in the same block, insert a break of
-     `break_minutes`. A break is never shortened; if a full break plus
-     any work would not fit, the leftover minutes stay free.
+     `break_minutes`. A break is never shortened, and the chunk after
+     it is at least as long as the break; if both would not fit, the
+     leftover minutes stay free.
   6. Whatever could not be placed is reported as unscheduled, with the
      hours left over, rather than shrinking estimates or refusing to
      build a partial schedule.
@@ -76,6 +77,13 @@ Rules settled in the Phase 3 review:
   - A bigger-than-any-slot assignment is split across blocks and days.
   - Breaks go only between two chunks of work in the same block, are
     never shortened, and are never left dangling at the end of a day.
+  - A chunk placed after a break is at least as long as the break
+    (v1.1). The scheduler does not pay a 15-minute break for a
+    1-to-14-minute session; such a tail stays free instead. The
+    break length is the floor, not a separate minimum-session
+    setting, and the first chunk in an empty block is not subject to
+    it. With break_minutes=0 chunks sit back to back and no Break
+    entry is written.
   - Within one due date, work that can still be finished is placed
     before work that cannot (v1.1). Between due dates, EDF holds.
 
@@ -86,7 +94,9 @@ Limitations (deliberate, for a first version):
     Monday and one Tuesday, not ninety minutes each day.
   - The EDF guarantee ignores breaks, so a set of assignments that
     fits exactly can still lose a few minutes to a break and end up
-    with a small remainder flagged.
+    with a small remainder flagged. A tail shorter than two breaks
+    in a block that already holds work is left idle rather than
+    turned into a tiny session; those minutes are not recovered.
   - There is no cap on hours per day and no preference for variety,
     so a long block can be one subject end to end.
   - "Optimal" is not defined yet. Once StudyFlow decides what a
@@ -263,11 +273,16 @@ def _place(
             continue
 
         if block.has_work:
-            # A break separates this chunk from the previous one. If the
-            # full break would leave no room for work, skip the block.
-            if free <= break_minutes:
+            # A break separates this chunk from the previous one, and
+            # the chunk after it must be at least as long as the break:
+            # a full break is never paid for a shorter session. If the
+            # block has no room for both, skip it (v1.1). With no break
+            # configured, one minute of room is enough and no Break
+            # entry is written.
+            if free - break_minutes < max(break_minutes, 1):
                 continue
-            _append(result, block, break_minutes, BREAK_LABEL)
+            if break_minutes > 0:
+                _append(result, block, break_minutes, BREAK_LABEL)
             free -= break_minutes
 
         chunk = min(remaining, free)
