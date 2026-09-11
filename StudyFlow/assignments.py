@@ -14,7 +14,7 @@ beyond calling those modules.
 """
 
 from datetime import date, datetime
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Tuple
 
 from models import Assignment, Priority
 
@@ -25,6 +25,11 @@ FIELDS = ["name", "subject", "due", "hours", "priority"]
 
 # Shown until the scheduler has run; the risk badge falls back to grey.
 RISK_NOT_RATED = "NOT RATED"
+
+# Shown under the due-date field while a past date is chosen. It is
+# information, not an error: overdue work is real work, and the
+# scheduler places it as early as it can.
+OVERDUE_NOTICE = "This date has already passed. StudyFlow will schedule it as soon as possible."
 
 
 def no_errors() -> Dict[str, str]:
@@ -67,12 +72,43 @@ def parse_due(due: str):
         return None
 
 
+def due_notice(due: str, today: date) -> str:
+    """
+    The notice for the form's due-date field: OVERDUE_NOTICE when the
+    chosen date is before today, otherwise "". Today and the future
+    say nothing; so does an unparseable value, which the validation
+    error already covers.
+    """
+    chosen = parse_due(due)
+    if chosen is None or chosen >= today:
+        return ""
+    return OVERDUE_NOTICE
+
+
 def parse_hours(hours: str):
     """'2.5' -> 2.5, or None if it is not a number."""
     try:
         return float(hours.strip())
     except ValueError:
         return None
+
+
+def due_countdown(days: int) -> Tuple[str, str]:
+    """
+    The card's big number and its label:
+
+        -3 -> ("3", "days overdue")     1 -> ("1", "day left")
+        -1 -> ("1", "day overdue")      6 -> ("6", "days left")
+         0 -> ("Today", "due")
+
+    Overdue work used to show "0 days left", the same as work due
+    today; now the number counts the days late instead.
+    """
+    if days < 0:
+        return str(-days), "day overdue" if days == -1 else "days overdue"
+    if days == 0:
+        return "Today", "due"
+    return str(days), "day left" if days == 1 else "days left"
 
 
 def due_in_words(days: int) -> str:
@@ -111,6 +147,7 @@ def row_from_assignment(a: Assignment, today: date) -> Dict[str, str]:
     string, plus the id so later features can edit or delete it.
     """
     days = (a.due_date - today).days
+    number, label = due_countdown(days)
     return {
         "id": str(a.id) if a.id is not None else "",
         "name": a.name,
@@ -118,7 +155,9 @@ def row_from_assignment(a: Assignment, today: date) -> Dict[str, str]:
         "due": due_in_words(days),
         "due_date": a.due_date.isoformat(),               # for editing
         "due_pretty": a.due_date.strftime("%d %b %Y"),   # "12 Sep 2026", for reading
-        "due_in_days": str(max(days, 0)),
+        "due_in_days": str(max(days, 0)),                 # for sorting
+        "due_number": number,                             # the card's big number ...
+        "due_label": label,                               # ... and what it counts
         "hours": hours_in_words(a.estimated_hours),
         "priority": a.priority.name,
         "risk": RISK_NOT_RATED,

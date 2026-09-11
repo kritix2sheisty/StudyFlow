@@ -12,8 +12,11 @@ from datetime import date
 
 from StudyFlow.assignments import (
     FIELDS,
+    OVERDUE_NOTICE,
     RISK_NOT_RATED,
     build_row,
+    due_countdown,
+    due_notice,
     is_valid,
     no_errors,
     sorted_by_urgency,
@@ -42,6 +45,8 @@ def test_valid_assignment_builds_the_dashboard_row():
         "due_date": "2026-09-15",
         "due_pretty": "15 Sep 2026",
         "due_in_days": "6",
+        "due_number": "6",
+        "due_label": "days left",
         "hours": "2.5 hours",
         "priority": "HIGH",
         "risk": RISK_NOT_RATED,
@@ -97,6 +102,49 @@ def test_due_wording_covers_today_tomorrow_and_overdue():
     assert build_row("A", "S", "2026-09-08", "1", "LOW", TODAY)["due"] == "Overdue by 1 day"
     assert build_row("A", "S", "2026-09-06", "1", "LOW", TODAY)["due"] == "Overdue by 3 days"
     assert build_row("A", "S", "2026-09-06", "1", "LOW", TODAY)["due_in_days"] == "0"
+
+
+# ---------- Overdue dates (v1.1) ----------
+
+def test_due_notice_only_for_dates_already_passed():
+    assert due_notice("2026-09-08", TODAY) == OVERDUE_NOTICE            # yesterday
+    assert due_notice("2026-08-01", TODAY) == OVERDUE_NOTICE            # long ago
+    assert due_notice("2026-09-09", TODAY) == ""                        # today
+    assert due_notice("2026-09-10", TODAY) == ""                        # tomorrow
+    assert due_notice("", TODAY) == ""                                  # nothing chosen yet
+    assert due_notice("not a date", TODAY) == ""                        # the error covers it
+    assert "already passed" in OVERDUE_NOTICE and "as soon as possible" in OVERDUE_NOTICE
+
+
+def test_due_notice_does_not_block_saving():
+    errors = validate_form("Late essay", "History", "2026-09-06", "1", "HIGH")
+    assert is_valid(errors)
+
+
+def test_due_countdown_gives_a_number_and_a_label():
+    assert due_countdown(-3) == ("3", "days overdue")
+    assert due_countdown(-1) == ("1", "day overdue")
+    assert due_countdown(0) == ("Today", "due")
+    assert due_countdown(1) == ("1", "day left")
+    assert due_countdown(6) == ("6", "days left")
+
+
+def test_rows_carry_the_countdown_and_keep_the_old_wording():
+    cases = {
+        "2026-09-06": ("3", "days overdue", "Overdue by 3 days"),
+        "2026-09-08": ("1", "day overdue", "Overdue by 1 day"),
+        "2026-09-09": ("Today", "due", "Due today"),
+        "2026-09-10": ("1", "day left", "Due tomorrow"),
+        "2026-09-15": ("6", "days left", "Due in 6 days"),
+    }
+    for due, (number, label, words) in cases.items():
+        row = build_row("A", "S", due, "1", "LOW", TODAY)
+        assert (row["due_number"], row["due_label"]) == (number, label)
+        assert row["due"] == words
+        assert row["due_pretty"] == date.fromisoformat(due).strftime("%d %b %Y")
+    # An overdue card never reads as "0 days left".
+    row = build_row("A", "S", "2026-09-06", "1", "LOW", TODAY)
+    assert (row["due_number"], row["due_label"]) != ("0", "days left")
 
 
 # ---------- The list the dashboard shows ----------

@@ -338,6 +338,7 @@ class DashboardState(rx.State):
     form_hours: str = ""
     form_priority: str = "MEDIUM"
     form_errors: dict[str, str] = forms.no_errors()
+    form_notice: str = ""                       # the chosen due date has passed (information, not an error)
 
     @rx.var
     def assignment_count(self) -> str:
@@ -356,6 +357,7 @@ class DashboardState(rx.State):
 
     def set_form_due(self, value: str):
         self.form_due = value
+        self.form_notice = forms.due_notice(value, date.today())
 
     def set_form_hours(self, value: str):
         self.form_hours = value
@@ -365,6 +367,7 @@ class DashboardState(rx.State):
 
     def open_form(self):
         self.form_errors = forms.no_errors()
+        self.form_notice = ""
         self.form_open = True
 
     def close_form(self):
@@ -376,6 +379,7 @@ class DashboardState(rx.State):
         self.form_hours = ""
         self.form_priority = "MEDIUM"
         self.form_errors = forms.no_errors()
+        self.form_notice = ""
         self.form_save_error = ""
         self.editing_id = ""
 
@@ -407,6 +411,7 @@ class DashboardState(rx.State):
         self.form_name = stored.name
         self.form_subject = stored.subject
         self.form_due = stored.due_date.isoformat()
+        self.form_notice = forms.due_notice(self.form_due, date.today())
         self.form_hours = f"{stored.estimated_hours:g}"
         self.form_priority = stored.priority.name
 
@@ -423,6 +428,7 @@ class DashboardState(rx.State):
         if not forms.is_valid(self.form_errors):
             return
         assignment = forms.to_assignment(*values)
+        overdue = " (overdue)" if assignment.due_date < date.today() else ""
         try:
             if self.is_editing:
                 assignment.id = int(self.editing_id)
@@ -432,10 +438,10 @@ class DashboardState(rx.State):
                     self.load_assignments()
                     self.form_save_error = "That assignment no longer exists. Close the form and add it again."
                     return
-                message = f"Saved changes to {assignment.name}."
+                message = f"Saved changes to {assignment.name}{overdue}."
             else:
                 add_assignment(assignment)
-                message = f"Added {assignment.name}."
+                message = f"Added {assignment.name}{overdue}."
         except Exception:
             self.form_save_error = "StudyFlow could not save that assignment. Please try again."
             return
@@ -673,7 +679,8 @@ def assignment_card(a: dict) -> rx.Component:
     """
     Built to be scanned, not read. The top strip is tinted in the
     risk colour and holds the two things a student looks for first:
-    how many days are left, large, and the risk badge. The body is
+    how many days are left (or overdue, or "Today"), large, and the
+    risk badge. The body is
     the name and subject. The footer is the detail: hours and priority.
     """
     ink = rx.match(a["risk"], *RISK_INK.items(), "var(--gray-11)")
@@ -683,8 +690,8 @@ def assignment_card(a: dict) -> rx.Component:
         # rather than run into each other.
         rx.flex(
             rx.hstack(
-                rx.heading(a["due_in_days"], size="7", line_height="1", color=ink),
-                rx.text("days left", size="2", weight="bold", color=ink, white_space="nowrap"),
+                rx.heading(a["due_number"], size="7", line_height="1", color=ink),
+                rx.text(a["due_label"], size="2", weight="bold", color=ink, white_space="nowrap"),
                 spacing="2", align="baseline", min_width="7em",
             ),
             rx.spacer(),
@@ -855,14 +862,21 @@ def progress_section() -> rx.Component:
 # 8. Add Assignment form
 # ---------------------------------------------------------------------
 
-def form_field(label: str, control: rx.Component, error: rx.Var) -> rx.Component:
-    """A labelled input with its validation message underneath."""
-    return rx.vstack(
+def form_field(label: str, control: rx.Component, error: rx.Var,
+               notice: rx.Var | None = None) -> rx.Component:
+    """
+    A labelled input with its validation message underneath. An
+    optional notice (information that does not block saving, such as
+    a due date that has passed) is shown in amber below the error line.
+    """
+    children = [
         rx.text(label, size="2", weight="medium"),
         control,
         rx.cond(error != "", rx.text(error, size="1", color=rx.color("red", 11))),
-        spacing="1", align="start", width="100%",
-    )
+    ]
+    if notice is not None:
+        children.append(rx.cond(notice != "", rx.text(notice, size="1", color=rx.color("amber", 11))))
+    return rx.vstack(*children, spacing="1", align="start", width="100%")
 
 
 def assignment_form() -> rx.Component:
@@ -897,7 +911,8 @@ def assignment_form() -> rx.Component:
                 rx.grid(
                     form_field("Due date",
                                rx.input(value=s.form_due, on_change=s.set_form_due, type="date", width="100%"),
-                               s.form_errors["due"]),
+                               s.form_errors["due"],
+                               notice=s.form_notice),
                     form_field("Estimated hours",
                                rx.input(value=s.form_hours, on_change=s.set_form_hours,
                                         type="number", step="0.25", min="0", placeholder="1.5", width="100%"),

@@ -62,6 +62,8 @@ def test_round_trip_through_storage():
         "due_date": "2026-09-15",
         "due_pretty": "15 Sep 2026",
         "due_in_days": "6",
+        "due_number": "6",
+        "due_label": "days left",
         "hours": "2.5 hours",
         "priority": "HIGH",
         "risk": RISK_NOT_RATED,
