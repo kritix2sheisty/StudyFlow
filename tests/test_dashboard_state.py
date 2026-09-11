@@ -344,7 +344,8 @@ def test_generate_places_the_work_into_the_saved_study_periods():
     assert by_name["Physics"].percent == 80
     assert by_name["Physics"].subject == "Chemistry"          # fill()'s default subject
     # The assignment cards now carry the real risk instead of NOT RATED.
-    assert {r["name"]: r["risk"] for r in state.assignments} == {"Math": "LOW", "Physics": "LOW"}
+    # Physics has 1h left and every hour before its deadline is taken.
+    assert {r["name"]: r["risk"] for r in state.assignments} == {"Math": "LOW", "Physics": "CRITICAL"}
 
 
 def test_completed_assignments_are_counted_but_never_planned():

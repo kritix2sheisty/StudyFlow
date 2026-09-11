@@ -498,7 +498,8 @@ def test_format_analysis_at_risk_assignment_shows_its_risk_level():
     result, assignments, slots = _report_example()
     text = format_analysis(result, assignments, slots, today=MONDAY)
     assert "Computer Science\n  Status: UNSCHEDULED\n  Scheduled: 0.0h\n  Remaining: 4.0h\n  Risk: CRITICAL" in text
-    assert "Remaining: 2.0h\n  Risk: LOW" in text          # Physics: 4h before Tuesday for 2h left
+    # Physics: 4h of slots before Tuesday, but Monday already holds 5h of blocks -> nothing free.
+    assert "Remaining: 2.0h\n  Risk: CRITICAL" in text
 
 
 def test_format_analysis_without_slots_omits_the_risk_line():

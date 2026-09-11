@@ -68,6 +68,36 @@ def available_hours_before_deadline(
     return hours
 
 
+def free_hours_before_deadline(
+    assignment: Assignment,
+    result: ScheduleResult,
+    time_slots: Iterable[TimeSlot],
+    today: date,
+) -> float:
+    """
+    Study time before the deadline that nothing is using yet:
+
+        raw capacity before the deadline (available_hours_before_deadline)
+        minus every block already on the schedule on those days
+
+    Every block counts as occupied, whoever it belongs to and whether
+    it is work or a break: a 15-minute break is 15 minutes the student
+    cannot study in. The assignment's own placed hours are occupied
+    too; they are not free to absorb what remains. Blocks after the
+    due date are ignored, since they cannot help before it. Never
+    negative: if the schedule holds more than the slots do (slots
+    edited after planning), the answer is 0.
+    """
+    raw = available_hours_before_deadline(assignment, time_slots, today)
+    occupied_minutes = sum(
+        block.end_minute - block.start_minute
+        for day, blocks in result.by_date.items()
+        if day <= assignment.due_date
+        for block in blocks
+    )
+    return max(raw - occupied_minutes / 60, 0.0)
+
+
 def deadline_risk_ratio(
     assignment: Assignment,
     result: ScheduleResult,
@@ -75,17 +105,22 @@ def deadline_risk_ratio(
     today: date,
 ) -> float:
     """
-    How the time available before the deadline compares with the work
+    How the time still free before the deadline compares with the work
     still to do:
 
-        available hours before deadline / remaining hours
+        free hours before deadline / remaining hours
 
-        remaining 4h, available 2h  -> 0.5   (not enough time)
-        remaining 4h, available 6h  -> 1.5   (some room to spare)
+        remaining 4h, 2h free  -> 0.5   (not enough time)
+        remaining 4h, 6h free  -> 1.5   (some room to spare)
+        remaining 1h, 0h free  -> 0.0   (every hour before the deadline
+                                         is already taken)
 
     Remaining hours come from the analyzer: required minus what is
     already on the schedule, with completed assignments and negative
-    estimates counting as nothing required.
+    estimates counting as nothing required. Free hours come from
+    free_hours_before_deadline(), so time other assignments have
+    consumed, and this assignment's own placed hours, no longer count
+    as available.
 
     When nothing remains (completed, zero-hour, or fully scheduled)
     the ratio has no meaning as a fraction, so it is reported as
@@ -94,15 +129,11 @@ def deadline_risk_ratio(
 
     An overdue assignment with work left has no time before its
     deadline, so the ratio is 0.
-
-    The available figure is raw capacity: it includes hours that this
-    or other assignments already occupy. A sharper version can use
-    free hours instead; this one is the simple, explainable start.
     """
     remaining = analyze_assignment(result, assignment).remaining_hours
     if remaining == 0:
         return math.inf
-    return available_hours_before_deadline(assignment, time_slots, today) / remaining
+    return free_hours_before_deadline(assignment, result, time_slots, today) / remaining
 
 
 # Risk levels, from a ratio of available time to remaining work.

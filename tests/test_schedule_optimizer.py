@@ -21,6 +21,7 @@ from schedule_optimizer import (
     RISK_MODERATE,
     available_hours_before_deadline,
     deadline_risk_ratio,
+    free_hours_before_deadline,
     risk_level,
 )
 
@@ -135,36 +136,42 @@ def scheduled(assignment: Assignment, hours: float, day: date = MONDAY) -> Sched
     return ScheduleResult(by_date={day: [ScheduledBlock(start, start + round(hours * 60), assignment.name)]})
 
 
+# "Available" means FREE capacity: raw study time before the deadline
+# minus every block already on the schedule on those days. In each
+# case below the assignment's own 2 scheduled hours on Monday are
+# occupied time and do not count as free.
+
 def test_ratio_0_5_is_a_critical_situation():
-    """Remaining 4h (6 required, 2 scheduled); available 2h -> 0.5."""
-    physics = task("Physics", MONDAY, 6)
-    assert deadline_risk_ratio(physics, scheduled(physics, 2), week(monday=2), MONDAY) == 0.5
+    """Remaining 4h (6 required, 2 scheduled); raw 4h, free 2h -> 0.5."""
+    physics = task("Physics", TUESDAY, 6)
+    assert deadline_risk_ratio(physics, scheduled(physics, 2), week(monday=2, tuesday=2), MONDAY) == 0.5
 
 
 def test_ratio_1_0_is_exactly_enough_time():
-    """Remaining 4h; available 4h (Mon 2, Tue 2, due Tuesday) -> 1.0."""
-    physics = task("Physics", TUESDAY, 6)
-    assert deadline_risk_ratio(physics, scheduled(physics, 2), week(monday=2, tuesday=2), MONDAY) == 1.0
+    """Remaining 4h; raw 6h (Mon to Wed), free 4h -> 1.0."""
+    physics = task("Physics", WEDNESDAY, 6)
+    slots = week(monday=2, tuesday=2, wednesday=2)
+    assert deadline_risk_ratio(physics, scheduled(physics, 2), slots, MONDAY) == 1.0
 
 
 def test_ratio_1_5_is_the_moderate_boundary():
-    """The brief's second example: remaining 4h, available 6h -> 1.5."""
-    physics = task("Physics", WEDNESDAY, 6)
-    slots = week(monday=2, tuesday=2, wednesday=2)
+    """Remaining 4h; raw 8h (Mon to Thu), free 6h -> 1.5."""
+    physics = task("Physics", THURSDAY, 6)
+    slots = week(monday=2, tuesday=2, wednesday=2, thursday=2)
     assert deadline_risk_ratio(physics, scheduled(physics, 2), slots, MONDAY) == 1.5
 
 
 def test_ratio_2_0_is_the_low_boundary():
-    """Remaining 4h; available 8h (2h a day, Monday to Thursday) -> 2.0."""
-    physics = task("Physics", THURSDAY, 6)
-    slots = week(monday=2, tuesday=2, wednesday=2, thursday=2)
+    """Remaining 4h; raw 10h (Mon to Fri), free 8h -> 2.0."""
+    physics = task("Physics", FRIDAY, 6)
+    slots = week(monday=2, tuesday=2, wednesday=2, thursday=2, friday=2)
     assert deadline_risk_ratio(physics, scheduled(physics, 2), slots, MONDAY) == 2.0
 
 
 def test_ratio_3_0_is_plenty_of_time():
-    """Remaining 2h (4 required, 2 scheduled); available 6h -> 3.0."""
-    essay = task("Essay", WEDNESDAY, 4)
-    slots = week(monday=2, tuesday=2, wednesday=2)
+    """Remaining 2h (4 required, 2 scheduled); raw 8h, free 6h -> 3.0."""
+    essay = task("Essay", THURSDAY, 4)
+    slots = week(monday=2, tuesday=2, wednesday=2, thursday=2)
     assert deadline_risk_ratio(essay, scheduled(essay, 2), slots, MONDAY) == 3.0
 
 
@@ -206,7 +213,9 @@ def test_ratio_uses_the_real_schedule():
     math_hw = task("Math", WEDNESDAY, 3)
     result = build_schedule([physics, math_hw], slots, today=MONDAY)
     assert deadline_risk_ratio(physics, result, slots, MONDAY) == math.inf
-    assert deadline_risk_ratio(math_hw, result, slots, MONDAY) == pytest.approx(4 / 2.25)
+    # Math has 2.25h left, but all 4h before Wednesday are occupied
+    # (Physics 3h, a break, Math's own 45 min): nothing free -> 0.
+    assert deadline_risk_ratio(math_hw, result, slots, MONDAY) == 0.0
 
 
 # =====================================================================
@@ -263,14 +272,129 @@ def test_risk_level_is_pure():
 
 
 def test_ratio_and_level_together_on_the_brief_example():
-    """Remaining 4h, available 2h -> 0.5 -> CRITICAL; available 6h -> 1.5 -> MODERATE."""
+    """Remaining 4h with nothing free -> 0 -> CRITICAL; with 4h free (raw 6h minus its own 2h) -> 1.0 -> HIGH."""
     physics = task("Physics", MONDAY, 6)
     assert risk_level(deadline_risk_ratio(physics, scheduled(physics, 2), week(monday=2), MONDAY)) == RISK_CRITICAL
     physics = task("Physics", WEDNESDAY, 6)
     slots = week(monday=2, tuesday=2, wednesday=2)
-    assert risk_level(deadline_risk_ratio(physics, scheduled(physics, 2), slots, MONDAY)) == RISK_MODERATE
+    assert risk_level(deadline_risk_ratio(physics, scheduled(physics, 2), slots, MONDAY)) == RISK_HIGH
 
 
 def test_nothing_remaining_classifies_as_low_without_a_special_case():
     done = task("Done", TUESDAY, 2)
     assert risk_level(deadline_risk_ratio(done, scheduled(done, 2), week(monday=2), MONDAY)) == RISK_LOW
+
+
+# =====================================================================
+# Free capacity: risk after accounting for time the schedule already uses
+# =====================================================================
+
+def blocks(day: date, *entries) -> list:
+    """entries: (start_hour, hours, label). Builds consecutive ScheduledBlocks."""
+    out = []
+    for start_hour, hours, label in entries:
+        start = round(start_hour * 60)
+        out.append(ScheduledBlock(start, start + round(hours * 60), label))
+    return out
+
+
+def test_free_hours_subtract_everything_on_the_schedule_before_the_deadline():
+    """Raw 4h (Mon 2, Tue 2); Monday holds someone else's 2h -> 2h free."""
+    french = task("French", TUESDAY, 1)
+    result = ScheduleResult(by_date={MONDAY: blocks(MONDAY, (16, 2, "Essay"))})
+    assert free_hours_before_deadline(french, result, week(monday=2, tuesday=2), MONDAY) == 2.0
+
+
+def test_1_unscheduled_with_no_free_capacity_is_critical():
+    """Remaining 1h; the whole 4h before the deadline is taken by other work -> 0.0, CRITICAL."""
+    french = task("French", TUESDAY, 1)
+    result = ScheduleResult(by_date={
+        MONDAY: blocks(MONDAY, (16, 2, "Essay")),
+        TUESDAY: blocks(TUESDAY, (16, 2, "Bio")),
+    })
+    ratio = deadline_risk_ratio(french, result, week(monday=2, tuesday=2), MONDAY)
+    assert ratio == 0.0 and risk_level(ratio) == RISK_CRITICAL
+
+
+def test_2_partial_with_no_free_capacity_is_critical():
+    """Required 4h, scheduled 2h, remaining 2h; the other 2h of capacity is taken -> 0.0, CRITICAL."""
+    physics = task("Physics", TUESDAY, 4)
+    result = ScheduleResult(by_date={
+        MONDAY: blocks(MONDAY, (16, 2, "Physics")),
+        TUESDAY: blocks(TUESDAY, (16, 2, "Essay")),
+    })
+    ratio = deadline_risk_ratio(physics, result, week(monday=2, tuesday=2), MONDAY)
+    assert ratio == 0.0 and risk_level(ratio) == RISK_CRITICAL
+
+
+def test_3_unscheduled_with_free_capacity_is_not_critical():
+    """Remaining 1h; raw 6h before Wednesday with only 1h taken -> 5h free -> 5.0, LOW."""
+    french = task("French", WEDNESDAY, 1)
+    result = ScheduleResult(by_date={MONDAY: blocks(MONDAY, (16, 1, "Essay"))})
+    ratio = deadline_risk_ratio(french, result, week(monday=2, tuesday=2, wednesday=2), MONDAY)
+    assert ratio == 5.0 and risk_level(ratio) == RISK_LOW
+
+
+def test_4_an_assignments_own_scheduled_time_is_not_free():
+    """Required 3h, scheduled 2h, remaining 1h; raw 5h minus the 2h it occupies -> 3h free -> 3.0, LOW."""
+    physics = task("Physics", WEDNESDAY, 3)
+    result = ScheduleResult(by_date={MONDAY: blocks(MONDAY, (16, 2, "Physics"))})
+    slots = week(monday=2, tuesday=2, wednesday=1)
+    assert free_hours_before_deadline(physics, result, slots, MONDAY) == 3.0
+    ratio = deadline_risk_ratio(physics, result, slots, MONDAY)
+    assert ratio == 3.0 and risk_level(ratio) == RISK_LOW
+
+
+def test_5_breaks_count_as_occupied_time():
+    """4-5 Math, 5-5:15 Break, 5:15-6 Physics is 2 hours occupied, not 1h45."""
+    french = task("French", MONDAY, 1)
+    result = ScheduleResult(by_date={
+        MONDAY: blocks(MONDAY, (16, 1, "Math"), (17, 0.25, "Break"), (17.25, 0.75, "Physics")),
+    })
+    assert free_hours_before_deadline(french, result, week(monday=3), MONDAY) == 1.0   # 3h raw - 2h occupied
+
+
+def test_6_work_after_the_deadline_does_not_reduce_free_capacity():
+    """Due Tuesday; Wednesday is fully booked, but that is after the deadline."""
+    french = task("French", TUESDAY, 1)
+    result = ScheduleResult(by_date={WEDNESDAY: blocks(WEDNESDAY, (16, 2, "Essay"))})
+    slots = week(monday=2, tuesday=2, wednesday=2)
+    assert free_hours_before_deadline(french, result, slots, MONDAY) == 4.0
+    assert deadline_risk_ratio(french, result, slots, MONDAY) == 4.0
+
+
+def test_7_overdue_with_remaining_work_is_critical():
+    late = task("Late", MONDAY - timedelta(days=1), 2)
+    result = ScheduleResult()
+    ratio = deadline_risk_ratio(late, result, week(monday=2, tuesday=2), MONDAY)
+    assert ratio == 0.0 and risk_level(ratio) == RISK_CRITICAL
+
+
+def test_8_completed_work_stays_low():
+    physics = task("Physics", TUESDAY, 2)
+    ratio = deadline_risk_ratio(physics, scheduled(physics, 2), week(monday=2), MONDAY)
+    assert ratio == math.inf and risk_level(ratio) == RISK_LOW
+
+
+def test_free_capacity_never_goes_negative():
+    """More on the schedule than the slots hold (slots were edited after planning): 0, not negative."""
+    french = task("French", MONDAY, 1)
+    result = ScheduleResult(by_date={MONDAY: blocks(MONDAY, (16, 5, "Essay"))})
+    assert free_hours_before_deadline(french, result, week(monday=2), MONDAY) == 0.0
+    assert deadline_risk_ratio(french, result, week(monday=2), MONDAY) == 0.0
+
+
+def test_the_demo_scenario_no_longer_says_low_for_unscheduled_work():
+    """Ten hours of slots, all consumed; French (1h, due Friday) is left out -> CRITICAL, not LOW."""
+    slots = week(monday=2, tuesday=2, wednesday=2, thursday=2, friday=2)
+    assignments = [
+        Assignment(name="Essay", subject="E", due_date=TUESDAY, estimated_hours=3, priority=Priority.HIGH),
+        Assignment(name="Bio", subject="B", due_date=WEDNESDAY, estimated_hours=2, priority=Priority.MEDIUM),
+        Assignment(name="Maths IA", subject="M", due_date=THURSDAY, estimated_hours=3, priority=Priority.HIGH),
+        Assignment(name="CS", subject="C", due_date=FRIDAY, estimated_hours=3, priority=Priority.HIGH),
+        Assignment(name="French", subject="F", due_date=FRIDAY, estimated_hours=1, priority=Priority.LOW),
+    ]
+    result = build_schedule(assignments, slots, today=MONDAY)
+    french = assignments[-1]
+    assert (french, 1.0) in result.unscheduled
+    assert risk_level(deadline_risk_ratio(french, result, slots, MONDAY)) == RISK_CRITICAL
