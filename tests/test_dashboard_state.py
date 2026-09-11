@@ -472,6 +472,53 @@ def test_changes_before_any_plan_do_not_claim_a_plan_went_stale():
     assert state.has_plan is False and state.plan_stale is False and state.plan_message == ""
 
 
+def test_invalidation_keeps_assignments_and_study_slots_and_generate_works_again():
+    """Only the generated values go; the student's data stays, and a new plan can be built from it."""
+    state = planned_state()
+    names_before = [r["name"] for r in state.assignments]
+    slots_before = len(state.slots)
+
+    add_slot(state, "Sunday", "9:00 AM", "11:00 AM")            # invalidates via study time
+    assert_plan_cleared(state, "study times")
+    assert [r["name"] for r in state.assignments] == names_before
+    assert len(state.slots) == slots_before + 1
+
+    state.ask_delete(state.assignments[1]["id"], "Physics")     # invalidates via assignments
+    state.confirm_delete()
+    assert_plan_cleared(state, "assignments")
+    assert "assignments and study times" in state.plan_message   # both kinds changed since the plan
+    assert [r["name"] for r in state.assignments] == ["Math"]
+    assert len(state.slots) == slots_before + 1
+
+    state.generate_study_plan()
+    assert state.has_plan is True and state.plan_stale is False and state.plan_message == ""
+    assert state.plan_required == "2.0" and state.plan_scheduled == "2.0" and state.plan_completion == "100"
+    assert state.plan_days and state.plan_statuses
+    assert all(r["risk"] != "NOT RATED" for r in state.assignments)
+
+
+def test_completing_an_assignment_that_is_already_gone_does_not_invalidate_the_plan():
+    """Nothing changed in the database, so the plan is not declared stale."""
+    state = planned_state()
+    missing = state.assignments[0]["id"]
+    storage.delete_assignment(int(missing))                     # gone behind the app's back
+    state.complete_assignment(missing)
+    assert state.has_plan is True and state.plan_stale is False
+    assert all(r["id"] != missing for r in state.assignments)   # the list was still refreshed
+
+
+def test_editing_an_assignment_that_is_already_gone_shows_an_error_and_keeps_the_plan():
+    state = planned_state()
+    missing = state.assignments[0]["id"]
+    state.open_edit(missing)
+    storage.delete_assignment(int(missing))
+    state.set_form_hours("5")
+    state.submit_form()
+    assert "no longer exists" in state.form_save_error
+    assert state.form_open is True
+    assert state.has_plan is True and state.plan_stale is False
+
+
 def test_a_failed_change_leaves_the_plan_alone():
     """Validation failure changes nothing, so the plan stays."""
     state = planned_state()
