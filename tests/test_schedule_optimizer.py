@@ -384,8 +384,14 @@ def test_free_capacity_never_goes_negative():
     assert deadline_risk_ratio(french, result, week(monday=2), MONDAY) == 0.0
 
 
-def test_the_demo_scenario_no_longer_says_low_for_unscheduled_work():
-    """Ten hours of slots, all consumed; French (1h, due Friday) is left out -> CRITICAL, not LOW."""
+def test_the_demo_scenario_no_longer_says_low_for_work_left_over():
+    """
+    Ten hours of slots, all consumed. Before achievable-first, CS (3h)
+    took Friday and French (1h, same deadline) was left out entirely;
+    now French fits Friday's free time and finishes, and CS is the one
+    left short. Either way, the work left over has no free hour before
+    its deadline and must read CRITICAL, not LOW.
+    """
     slots = week(monday=2, tuesday=2, wednesday=2, thursday=2, friday=2)
     assignments = [
         Assignment(name="Essay", subject="E", due_date=TUESDAY, estimated_hours=3, priority=Priority.HIGH),
@@ -395,6 +401,9 @@ def test_the_demo_scenario_no_longer_says_low_for_unscheduled_work():
         Assignment(name="French", subject="F", due_date=FRIDAY, estimated_hours=1, priority=Priority.LOW),
     ]
     result = build_schedule(assignments, slots, today=MONDAY)
-    french = assignments[-1]
-    assert (french, 1.0) in result.unscheduled
-    assert risk_level(deadline_risk_ratio(french, result, slots, MONDAY)) == RISK_CRITICAL
+    cs, french = assignments[-2], assignments[-1]
+    assert (cs, 2.25) in result.unscheduled
+    assert not any(a is french for a, _ in result.unscheduled)
+    assert free_hours_before_deadline(cs, result, slots, MONDAY) == 0.0
+    assert risk_level(deadline_risk_ratio(cs, result, slots, MONDAY)) == RISK_CRITICAL
+    assert risk_level(deadline_risk_ratio(french, result, slots, MONDAY)) == RISK_LOW

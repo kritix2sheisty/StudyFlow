@@ -5,7 +5,9 @@ Pytest suite for schedule_builder.build_schedule().
 Part 1 is the original basics. Part 2 covers the situations raised in
 the Phase 3 review: deadlines (never place work after its due date),
 allocation that respects deadlines rather than only priority order,
-and break behaviour at the edges of a slot.
+and break behaviour at the edges of a slot. Part 4 is the v1.1
+achievable-first rule: within one due date, work that can still be
+finished is placed before work that cannot.
 """
 
 from datetime import date, timedelta
@@ -13,6 +15,7 @@ from datetime import date, timedelta
 import pytest
 
 from models import Assignment, Priority, TimeSlot, Weekday
+from schedule_analyzer import assignment_status
 from schedule_builder import (
     ScheduledBlock,
     ScheduleResult,
@@ -548,3 +551,168 @@ def test_format_schedule_mentions_due_date_for_unscheduled_work():
     text = format_schedule(result)
     assert "Due Tuesday" in text
     assert TUESDAY.isoformat() in text
+
+
+# =====================================================================
+# Part 4 — achievable first (v1.1)
+# =====================================================================
+#
+# Two tasks with the same due date compete for the same hours. If one
+# of them cannot be finished in the time that is free before that date
+# anyway, it should not take hours that would have completed the other.
+# Between different due dates nothing changes: earliest deadline first.
+
+SIX_HOURS = [slot(Weekday.MONDAY, 15, 18), slot(Weekday.TUESDAY, 15, 18)]
+
+
+def status_of(result, assignment) -> str:
+    return assignment_status(result, assignment)
+
+
+def unscheduled_of(result) -> dict:
+    return {a.name: hours for a, hours in result.unscheduled}
+
+
+def test_impossible_task_does_not_starve_an_achievable_one_with_the_same_deadline():
+    """
+    The brief's example. Monday and Tuesday 3-6 PM (6h); CS Project
+    20h and Pure Math 2h, both HIGH, both due Wednesday. Phase 2
+    ranks CS first (same date and priority, bigger task first), and
+    on its own that lets CS take all six hours.
+
+    Pure Math can be finished, CS cannot, so Pure Math goes first and
+    CS gets everything left: Monday 5:15-6 after the break, and all
+    of Tuesday, 3h45 in total.
+    """
+    cs = task("CS Project", WEDNESDAY, 20, Priority.HIGH)
+    math = task("Pure Math", WEDNESDAY, 2, Priority.HIGH)
+    result = build_schedule([cs, math], SIX_HOURS, today=MONDAY)
+
+    assert minutes_of(result, MONDAY, "Pure Math") == 120
+    assert status_of(result, math) == "COMPLETE"
+    assert minutes_of(result, MONDAY, "CS Project") == 45
+    assert minutes_of(result, TUESDAY, "CS Project") == 180
+    assert status_of(result, cs) == "PARTIAL"
+    assert unscheduled_of(result) == {"CS Project": 16.25}
+
+    # The timetable itself, as the brief drew it.
+    assert [(b.format_time_range(), b.label) for b in result.by_date[MONDAY]] == [
+        ("3 PM–5 PM", "Pure Math"),
+        ("5 PM–5:15 PM", "Break"),
+        ("5:15 PM–6 PM", "CS Project"),
+    ]
+    assert [(b.format_time_range(), b.label) for b in result.by_date[TUESDAY]] == [
+        ("3 PM–6 PM", "CS Project"),
+    ]
+    assert_no_overlaps(result)
+
+
+def test_achievable_first_ignores_priority_within_a_deadline():
+    """A LOW task that can be finished still goes before a HIGH task that cannot."""
+    cs = task("CS Project", WEDNESDAY, 20, Priority.HIGH)
+    math = task("Pure Math", WEDNESDAY, 2, Priority.LOW)
+    result = build_schedule([cs, math], SIX_HOURS, today=MONDAY)
+
+    assert minutes_of(result, MONDAY, "Pure Math") == 120
+    assert status_of(result, math) == "COMPLETE"
+    assert minutes_of(result, MONDAY, "CS Project") + minutes_of(result, TUESDAY, "CS Project") == 225
+    assert unscheduled_of(result) == {"CS Project": 16.25}
+    assert_no_overlaps(result)
+
+
+def test_two_impossible_tasks_still_fall_back_to_phase_2_order():
+    """
+    CS 20h HIGH and Math 8h MEDIUM in 6h: neither can be finished, so
+    nothing is protected and the Phase 2 rank decides, as before. CS
+    (higher priority) takes all six hours; Math gets nothing.
+    """
+    cs = task("CS Project", WEDNESDAY, 20, Priority.HIGH)
+    math = task("Pure Math", WEDNESDAY, 8, Priority.MEDIUM)
+    result = build_schedule([cs, math], SIX_HOURS, today=MONDAY)
+
+    assert labels(result, MONDAY) == ["CS Project"]
+    assert labels(result, TUESDAY) == ["CS Project"]
+    assert status_of(result, math) == "UNSCHEDULED"
+    assert unscheduled_of(result) == {"CS Project": 14.0, "Pure Math": 8.0}
+    assert_no_overlaps(result)
+
+
+def test_task_that_fits_exactly_is_still_placed_first():
+    """
+    CS 6h fits the six hours exactly, so it is achievable and keeps
+    its Phase 2 place ahead of Math 2h. CS finishes; Math, with no
+    time left, is unscheduled. Same as before the change.
+    """
+    cs = task("CS Project", WEDNESDAY, 6, Priority.HIGH)
+    math = task("Pure Math", WEDNESDAY, 2, Priority.HIGH)
+    result = build_schedule([cs, math], SIX_HOURS, today=MONDAY)
+
+    assert labels(result, MONDAY) == ["CS Project"]
+    assert labels(result, TUESDAY) == ["CS Project"]
+    assert status_of(result, cs) == "COMPLETE"
+    assert status_of(result, math) == "UNSCHEDULED"
+    assert unscheduled_of(result) == {"Pure Math": 2.0}
+    assert_no_overlaps(result)
+
+
+def test_three_way_same_deadline():
+    """
+    CS 20h HIGH, Math 2h HIGH, Chemistry 3h LOW, all due Wednesday,
+    6h available. Math and Chemistry can both be finished (Phase 2
+    order among them: Math, then Chemistry); CS cannot and comes
+    last, getting the 30 minutes left on Tuesday after the break.
+    """
+    cs = task("CS Project", WEDNESDAY, 20, Priority.HIGH)
+    math = task("Pure Math", WEDNESDAY, 2, Priority.HIGH)
+    chem = task("Chemistry", WEDNESDAY, 3, Priority.LOW)
+    result = build_schedule([cs, math, chem], SIX_HOURS, today=MONDAY)
+
+    assert status_of(result, math) == "COMPLETE"
+    assert status_of(result, chem) == "COMPLETE"
+    assert status_of(result, cs) == "PARTIAL"
+    assert labels(result, MONDAY) == ["Pure Math", "Break", "Chemistry"]
+    assert labels(result, TUESDAY) == ["Chemistry", "Break", "CS Project"]
+    assert minutes_of(result, TUESDAY, "CS Project") == 30
+    assert unscheduled_of(result) == {"CS Project": 19.5}
+    assert_no_overlaps(result)
+
+
+def test_earlier_deadline_still_beats_an_achievable_later_one():
+    """
+    EDF is unchanged. CS 20h is due Tuesday and cannot be finished;
+    Pure Math 2h is due Wednesday and could be. Only Monday and
+    Tuesday exist. The earlier deadline is still served first, so CS
+    takes both days and Pure Math is left out. Letting a later
+    deadline jump ahead is a separate policy decision, deliberately
+    not made here.
+    """
+    cs = task("CS Project", TUESDAY, 20, Priority.HIGH)
+    math = task("Pure Math", WEDNESDAY, 2, Priority.HIGH)
+    result = build_schedule([cs, math], SIX_HOURS, today=MONDAY)
+
+    assert labels(result, MONDAY) == ["CS Project"]
+    assert labels(result, TUESDAY) == ["CS Project"]
+    assert status_of(result, math) == "UNSCHEDULED"
+    assert unscheduled_of(result) == {"CS Project": 14.0, "Pure Math": 2.0}
+    assert_no_overlaps(result)
+
+
+def test_overdue_impossible_task_does_not_starve_work_due_today():
+    """
+    An overdue task and a task due today share the "today" group.
+    The overdue essay (20h, HIGH) outranks the quiz prep (1h, MEDIUM)
+    in Phase 2 and may use any block, but it cannot be finished in
+    the two hours that exist; the quiz prep can. Quiz prep goes
+    first and finishes; the essay gets the 45 minutes after the break.
+    """
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    essay = task("Late essay", MONDAY - timedelta(days=7), 20, Priority.HIGH)
+    quiz = task("Quiz prep", MONDAY, 1, Priority.MEDIUM)
+    result = build_schedule([essay, quiz], slots, today=MONDAY)
+
+    assert labels(result, MONDAY) == ["Quiz prep", "Break", "Late essay"]
+    assert minutes_of(result, MONDAY, "Quiz prep") == 60
+    assert status_of(result, quiz) == "COMPLETE"
+    assert minutes_of(result, MONDAY, "Late essay") == 45
+    assert unscheduled_of(result) == {"Late essay": 19.25}
+    assert_no_overlaps(result)
