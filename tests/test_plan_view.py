@@ -69,8 +69,9 @@ def test_status_rows_carry_status_percent_and_real_risk(plan):
     assert physics.status == "PARTIAL"
     assert (physics.scheduled, physics.required, physics.remaining) == ("4.0", "5.0", "1.0")
     assert physics.percent == 80
-    # 6h of study time exists before Friday for 1h remaining: ratio 6 -> LOW.
-    assert physics.risk == "LOW"
+    # 6h of study time exists before Friday, but all of it is on the
+    # schedule (Math 2h, Physics 4h); nothing is free for the 1h left.
+    assert physics.risk == "CRITICAL"
     assert physics.id == "2" and physics.due == "2026-08-21"
     for r in rows:
         assert isinstance(r.percent, int)
@@ -101,7 +102,7 @@ def test_a_completely_unscheduled_assignment_is_zero_percent():
 
 
 def test_risk_by_name(plan):
-    assert plan_view.risk_by_name(plan_view.status_rows(plan, SLOTS, MONDAY)) == {"Math": "LOW", "Physics": "LOW"}
+    assert plan_view.risk_by_name(plan_view.status_rows(plan, SLOTS, MONDAY)) == {"Math": "LOW", "Physics": "CRITICAL"}
 
 
 def test_guard_messages():
