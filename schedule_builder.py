@@ -19,6 +19,11 @@ guaranteed to be the best possible schedule (see "Limitations").
      dated blocks for the next `days_ahead` days, in time order.
   3. Re-order the ranked list by due date, earliest first, with the
      Phase 2 rank breaking ties. This is earliest-deadline-first (EDF).
+  3b. Within one due date, place the assignments that can still be
+     finished before the others. "Can be finished" is judged when the
+     group's turn comes, against the minutes actually still free in
+     the blocks that assignment may use (v1.1, "achievable first";
+     see below). The Phase 2 rank still orders each half.
   4. For each assignment in that order, walk the blocks in time order
      and pour work into every block dated on or before its due date,
      splitting across blocks as needed, until the assignment is fully
@@ -44,7 +49,23 @@ prioritizer's promise 6), and if it is placed first it swallows
 Monday to Friday and the worksheet never gets its hour, even though
 one was trivially available. Phase 2 still decides the order among
 assignments that share a due date, and so which of them is cut when
-there is not enough time.
+there is not enough time, with one exception.
+
+Achievable first (v1.1). Two assignments due the same day compete
+for the same hours, and Phase 2 puts the bigger one first because it
+needs starting sooner. When the bigger one cannot be finished in the
+time that exists anyway, that order lets it swallow every hour and
+leave the smaller one, which could have been finished, with nothing:
+a 20-hour project and a 2-hour exercise due the same day, six hours
+free, gave the project all six and the exercise none. So within a
+due date, assignments whose whole estimate fits in the minutes still
+free at that point are placed first, then the ones that cannot fit;
+Phase 2 order holds inside each half. The exercise finishes and the
+project still gets everything left. When everything fits, or nothing
+does, the order is exactly the Phase 2 order, as before. Between
+different due dates nothing changes: an earlier deadline is served
+first even when it cannot be finished and a later one could be. That
+trade is a separate policy decision, deliberately not made here.
 
 Rules settled in the Phase 3 review:
   - Work is never placed after its due date. A slot on the due date
@@ -55,6 +76,8 @@ Rules settled in the Phase 3 review:
   - A bigger-than-any-slot assignment is split across blocks and days.
   - Breaks go only between two chunks of work in the same block, are
     never shortened, and are never left dangling at the end of a day.
+  - Within one due date, work that can still be finished is placed
+    before work that cannot (v1.1). Between due dates, EDF holds.
 
 Limitations (deliberate, for a first version):
   - Greedy fills the earliest eligible block completely before moving
@@ -73,6 +96,7 @@ Limitations (deliberate, for a first version):
 """
 
 from dataclasses import dataclass, field
+from itertools import groupby
 from datetime import date, timedelta
 from typing import Dict, List, Optional, Tuple
 
@@ -157,7 +181,7 @@ def _placement_order(assignments: List[Assignment], today: date) -> List[Assignm
     due date.
     """
     ranked = prioritize_assignments(assignments, today=today)
-    return sorted(ranked, key=lambda a: max(a.due_date, today))
+    return sorted(ranked, key=lambda a: _effective_due(a, today))
 
 
 def _can_schedule_on(assignment: Assignment, study_date: date) -> bool:
@@ -174,6 +198,43 @@ def _can_schedule_on(assignment: Assignment, study_date: date) -> bool:
     period on the due date itself is allowed.
     """
     return study_date <= assignment.due_date
+
+
+def _effective_due(assignment: Assignment, today: date) -> date:
+    """The day an assignment's deadline pressure applies: its due
+    date, or today if that has already passed."""
+    return max(assignment.due_date, today)
+
+
+def _free_minutes_before(assignment: Assignment, blocks: List[_WorkBlock], today: date) -> int:
+    """
+    Minutes still free, right now, in the blocks this assignment may
+    use: those on or before its due date, or every block if it is
+    overdue (the same eligibility _place() applies). Read from the
+    live blocks, so time already given to earlier assignments is
+    not counted.
+    """
+    overdue = assignment.due_date < today
+    return sum(
+        block.remaining
+        for block in blocks
+        if overdue or _can_schedule_on(assignment, block.date)
+    )
+
+
+def _achievable_first(group: List[Assignment], blocks: List[_WorkBlock], today: date) -> List[Assignment]:
+    """
+    Order one due-date group: assignments whose whole estimate fits in
+    the minutes currently free before their deadline, then the rest.
+    The sort is stable, so the Phase 2 order the group arrived in
+    survives inside each half. Breaks are not counted, in line with
+    the EDF guarantee elsewhere in this module.
+    """
+    def cannot_finish(assignment: Assignment) -> bool:
+        needed = round(assignment.estimated_hours * 60)
+        return needed > _free_minutes_before(assignment, blocks, today)
+
+    return sorted(group, key=cannot_finish)
 
 
 def _place(
@@ -234,16 +295,20 @@ def build_schedule(
     """
     Build a deadline-aware schedule for the next `days_ahead` days.
 
-    See the module docstring for the algorithm. Assignments that do
-    not fit on or before their due date end up in result.unscheduled,
-    along with how many hours were left over.
+    See the module docstring for the algorithm. Assignments are
+    placed earliest deadline first; within one deadline, those that
+    can still be finished go before those that cannot. Assignments
+    that do not fit on or before their due date end up in
+    result.unscheduled, along with how many hours were left over.
     """
     today = today or date.today()
     blocks = _generate_week_blocks(time_slots, today, days_ahead)
     result = ScheduleResult()
 
-    for assignment in _placement_order(assignments, today):
-        _place(assignment, blocks, today, break_minutes, result)
+    ordered = _placement_order(assignments, today)
+    for _, group in groupby(ordered, key=lambda a: _effective_due(a, today)):
+        for assignment in _achievable_first(list(group), blocks, today):
+            _place(assignment, blocks, today, break_minutes, result)
 
     _sort_days(result)
     return result
