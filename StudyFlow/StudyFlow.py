@@ -47,7 +47,7 @@ from storage import (
 from StudyFlow import assignments as forms
 from StudyFlow import plan_view
 from StudyFlow import study_time
-from StudyFlow.plan_view import Block, Day
+from StudyFlow.plan_view import Block, Day, StatusRow
 from study_plan import generate_study_plan
 
 # Make sure the SQLite database and its tables exist before the first
@@ -66,7 +66,7 @@ RISK_INK = {risk: f"var(--{color}-11)" for risk, color in RISK_COLORS.items()}  
 
 # Navigation: label -> route. Schedule and Progress are visual only until
 # those pages exist.
-NAV_ITEMS = {"Dashboard": "/", "Assignments": "/assignments", "Schedule": "/schedule", "Progress": "#"}
+NAV_ITEMS = {"Dashboard": "/", "Assignments": "/assignments", "Schedule": "/schedule", "Progress": "/progress"}
 
 # Shared card styling: a subtle border that brightens on hover. No motion.
 CARD_STYLE = {
@@ -105,15 +105,25 @@ class DashboardState(rx.State):
     plan_message: str = ""                      # why there is no plan, or what went wrong
     plan_days: list[Day] = []
     today_plan: list[dict[str, str]] = []
-    plan_statuses: list[dict[str, str]] = []
+    plan_statuses: list[StatusRow] = []
     plan_required: str = "0.0"
     plan_scheduled: str = "0.0"
     plan_unscheduled: str = "0.0"
     plan_completion: str = "0"
 
+    # Completed assignments are not unfinished work, so they stay out of
+    # every list and total; the Progress page shows them separately.
+    completed_names: list[str] = []
+
+    @rx.var
+    def completed_count(self) -> str:
+        return str(len(self.completed_names))
+
     def load_assignments(self):
-        """Read the active assignments from the database, soonest due first."""
-        self.assignments = forms.rows_from(list_assignments(include_completed=False), date.today())
+        """Read the assignments from the database: active ones soonest due first, completed ones by name."""
+        stored = list_assignments(include_completed=True)
+        self.assignments = forms.rows_from([a for a in stored if not a.completed], date.today())
+        self.completed_names = [a.name for a in stored if a.completed]
 
     # ---- Study time: the student's recurring weekly availability ----
     #
@@ -1142,21 +1152,21 @@ def day_card(day: Day) -> rx.Component:
     )
 
 
-def status_line(row: dict) -> rx.Component:
+def status_line(row: StatusRow) -> rx.Component:
     """One assignment's outcome in the plan: status, hours and risk."""
     return rx.flex(
         rx.vstack(
-            rx.text(row["name"], weight="bold"),
-            rx.text(row["scheduled"], " / ", row["required"], "h scheduled · due ", row["due"],
+            rx.text(row.name, weight="bold"),
+            rx.text(row.scheduled, " / ", row.required, "h scheduled · due ", row.due,
                     size="2", color_scheme="gray"),
             spacing="0", align="start",
         ),
         rx.spacer(),
         rx.hstack(
-            rx.badge(row["status"], variant="soft", radius="full",
-                     color_scheme=rx.match(row["status"], *STATUS_COLORS.items(), "gray")),
-            rx.badge("Risk: ", row["risk"], variant="solid", radius="full",
-                     color_scheme=rx.match(row["risk"], *RISK_COLORS.items(), "gray")),
+            rx.badge(row.status, variant="soft", radius="full",
+                     color_scheme=rx.match(row.status, *STATUS_COLORS.items(), "gray")),
+            rx.badge("Risk: ", row.risk, variant="solid", radius="full",
+                     color_scheme=rx.match(row.risk, *RISK_COLORS.items(), "gray")),
             spacing="2", wrap="wrap",
         ),
         width="100%", align="center", wrap="wrap", spacing="3",
@@ -1226,6 +1236,156 @@ STATUS_COLORS = {"COMPLETE": "green", "PARTIAL": "orange", "UNSCHEDULED": "red"}
 
 
 # ---------------------------------------------------------------------
+# 12. Progress page: how much of the work has a place in the plan
+# ---------------------------------------------------------------------
+
+def overall_completion_card() -> rx.Component:
+    s = DashboardState
+    return rx.card(
+        rx.vstack(
+            eyebrow("Overall completion"),
+            rx.hstack(
+                rx.heading(s.plan_completion, "%", size=BIG_NUMBER, line_height="1", color=rx.color("accent", 11)),
+                rx.text(s.plan_scheduled, "h scheduled / ", s.plan_required, "h required",
+                        size="2", color_scheme="gray"),
+                spacing="3", align="end", wrap="wrap",
+            ),
+            rx.progress(value=s.progress_value, size="3", width="100%"),
+            rx.flex(
+                progress_stat("Required", s.plan_required),
+                progress_stat("Scheduled", s.plan_scheduled),
+                progress_stat("Unscheduled", s.plan_unscheduled),
+                rx.vstack(eyebrow("Assignments"),
+                          rx.heading(s.assignment_count, " active · ", s.completed_count, " done", size="5"),
+                          spacing="1", align="start"),
+                spacing="7", wrap="wrap",
+            ),
+            spacing="4", align="start", width="100%",
+        ),
+        size="3", width="100%",
+    )
+
+
+def assignment_progress_row(row: StatusRow) -> rx.Component:
+    """One assignment: hours, its own bar, status and risk."""
+    return rx.card(
+        rx.vstack(
+            rx.flex(
+                rx.vstack(
+                    rx.text(row.name, weight="bold"),
+                    rx.text(row.subject, " · due ", row.due, size="2", color_scheme="gray"),
+                    spacing="0", align="start",
+                ),
+                rx.spacer(),
+                rx.hstack(
+                    rx.badge(row.status, variant="soft", radius="full",
+                             color_scheme=rx.match(row.status, *STATUS_COLORS.items(), "gray")),
+                    rx.badge("Risk: ", row.risk, variant="solid", radius="full",
+                             color_scheme=rx.match(row.risk, *RISK_COLORS.items(), "gray")),
+                    spacing="2", wrap="wrap",
+                ),
+                width="100%", align="center", wrap="wrap", spacing="3",
+            ),
+            rx.hstack(
+                rx.progress(value=row.percent, size="2", width="100%"),
+                rx.text(row.percent, "%", size="2", weight="medium", min_width="3.5em", text_align="right"),
+                spacing="3", align="center", width="100%",
+            ),
+            rx.text(row.scheduled, "h scheduled · ", row.remaining, "h remaining · ", row.required, "h required",
+                    size="1", color_scheme="gray"),
+            spacing="2", align="start", width="100%",
+        ),
+        size="2", width="100%", style=CARD_STYLE,
+    )
+
+
+def risk_line(row: StatusRow) -> rx.Component:
+    return rx.hstack(
+        rx.box(width="10px", height="10px", border_radius="999px", flex_shrink="0",
+               background=rx.match(row.risk, *{k: f"var(--{v}-9)" for k, v in RISK_COLORS.items()}.items(),
+                                   "var(--gray-8)")),
+        rx.text(row.name, weight="medium"),
+        rx.spacer(),
+        rx.badge(row.risk, variant="soft", radius="full",
+                 color_scheme=rx.match(row.risk, *RISK_COLORS.items(), "gray")),
+        spacing="3", align="center", width="100%", padding_y="2",
+        border_bottom=f"1px solid {rx.color('gray', 4)}",
+    )
+
+
+def completed_line(name: str) -> rx.Component:
+    return rx.hstack(
+        rx.icon("circle_check", size=16, color=rx.color("green", 9)),
+        rx.text(name, size="2", style={"text_decoration": "line-through"}, color_scheme="gray"),
+        spacing="2", align="center",
+    )
+
+
+def progress_page() -> rx.Component:
+    s = DashboardState
+    no_assignments = rx.card(
+        rx.vstack(
+            rx.icon("inbox", size=28, color=rx.color("gray", 9)),
+            rx.text("No progress to show yet.", weight="medium"),
+            rx.button(rx.icon("plus", size=18), "Add Assignment", size="3", on_click=s.open_form),
+            spacing="3", align="center", padding_y="6",
+        ),
+        width="100%",
+    )
+    no_plan = rx.card(
+        rx.vstack(
+            rx.icon("sparkles", size=28, color=rx.color("gray", 9)),
+            rx.text("Generate a study plan to see your progress.", weight="medium"),
+            rx.button(rx.icon("sparkles", size=18), "Generate Study Plan", size="3", on_click=s.generate_study_plan),
+            spacing="3", align="center", padding_y="6",
+        ),
+        width="100%",
+    )
+    with_plan = rx.vstack(
+        overall_completion_card(),
+        section("Assignments", "Each assignment's share of the plan.",
+                rx.vstack(rx.foreach(s.plan_statuses, assignment_progress_row), spacing="3", width="100%")),
+        rx.grid(
+            section("Deadline risk", "From the optimizer: time available before each due date against work left.",
+                    rx.card(rx.vstack(rx.foreach(s.plan_statuses, risk_line), spacing="0", width="100%"),
+                            size="3", width="100%")),
+            section("Completed", "Finished work stays out of every total.",
+                    rx.card(
+                        rx.cond(
+                            s.completed_names.length() > 0,
+                            rx.vstack(rx.foreach(s.completed_names, completed_line), spacing="2", align="start"),
+                            rx.text("Nothing completed yet.", size="2", color_scheme="gray"),
+                        ),
+                        size="3", width="100%",
+                    )),
+            columns=rx.breakpoints(initial="1", lg="2"), spacing=SECTION_GAP, width="100%",
+        ),
+        spacing=SECTION_GAP, width="100%",
+    )
+    return rx.box(
+        rx.container(
+            rx.vstack(
+                header(active="Progress"),
+                rx.vstack(
+                    rx.heading("Progress", size="7"),
+                    rx.text("How much of your required work has a place in your plan.", size="2", color_scheme="gray"),
+                    spacing="1", align="start",
+                ),
+                rx.cond(
+                    s.assignments.length() > 0,
+                    rx.cond(s.has_plan, with_plan, no_plan),
+                    no_assignments,
+                ),
+                spacing=SECTION_GAP, width="100%", padding_bottom="9",
+            ),
+            size="4", padding_x=PAGE_PADDING_X,
+        ),
+        assignment_form(),
+        background=rx.color("gray", 1), min_height="100vh",
+    )
+
+
+# ---------------------------------------------------------------------
 # Page
 # ---------------------------------------------------------------------
 
@@ -1264,4 +1424,6 @@ app.add_page(index, title="StudyFlow", on_load=DashboardState.load_data)
 app.add_page(assignments_page, route="/assignments", title="Assignments · StudyFlow",
              on_load=DashboardState.load_data)
 app.add_page(schedule_page, route="/schedule", title="Schedule · StudyFlow",
+             on_load=DashboardState.load_data)
+app.add_page(progress_page, route="/progress", title="Progress · StudyFlow",
              on_load=DashboardState.load_data)

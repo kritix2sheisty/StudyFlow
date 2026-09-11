@@ -6,11 +6,11 @@ it catches the errors that would stop reflex run before it serves
 anything.
 """
 
-from StudyFlow.StudyFlow import DashboardState, app, assignments_page, index, schedule_page
+from StudyFlow.StudyFlow import DashboardState, app, assignments_page, index, progress_page, schedule_page
 
 
 def test_every_page_builds():
-    for page in (index, assignments_page, schedule_page):
+    for page in (index, assignments_page, schedule_page, progress_page):
         assert page() is not None
     assert app is not None
 
@@ -18,6 +18,7 @@ def test_every_page_builds():
 def test_state_exposes_the_vars_the_pages_bind_to():
     for name in (
         "assignments", "assignment_count", "required_hours", "greeting", "today_label",
+        "completed_names", "completed_count",
         "slots", "slot_hours",
         "has_plan", "plan_message", "plan_days", "today_plan", "plan_statuses",
         "plan_required", "plan_scheduled", "plan_unscheduled", "plan_completion", "progress_value",
