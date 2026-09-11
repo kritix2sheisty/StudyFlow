@@ -129,6 +129,21 @@ def test_max_consecutive_minutes_passes_through_to_the_builder():
         assignments, slots, today=MONDAY, max_consecutive_minutes=90).unscheduled
 
 
+def test_min_session_minutes_passes_through_to_the_builder():
+    """Long 60 then a 10-minute task: placed after a break by default, refused at a 30-minute minimum."""
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    assignments = [task("Long", 1, priority=Priority.HIGH), task("Tiny", 10 / 60)]
+    default = generate_study_plan(assignments, slots, today=MONDAY)
+    assert [b.label for b in default.schedule.by_date[MONDAY]] == ["Long", "Break", "Tiny"]
+    assert default.unscheduled_hours == 0.0
+
+    strict = generate_study_plan(assignments, slots, today=MONDAY, min_session_minutes=30)
+    assert [b.label for b in strict.schedule.by_date[MONDAY]] == ["Long"]
+    assert strict.unscheduled_hours == 10 / 60
+    assert strict.schedule.unscheduled == build_schedule(
+        assignments, slots, today=MONDAY, min_session_minutes=30).unscheduled
+
+
 def test_inputs_are_not_mutated():
     assignments, slots = week_example()
     before = [a.name for a in assignments]

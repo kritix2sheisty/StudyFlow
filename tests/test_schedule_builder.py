@@ -11,7 +11,10 @@ finished is placed before work that cannot. Part 5 is the v1.1
 break-aware chunk floor: a chunk placed after a break is at least as
 long as the break. Part 6 is the v1.1 configurable maximum
 consecutive study time: a run of work inside one block is capped, and
-the same assignment continues after a break.
+the same assignment continues after a break. Part 7 is the v1.1
+configurable minimum session length (policy B): a chunk is at least
+the minimum unless it is the assignment's last piece, and a chunk
+after a break is also at least a break long.
 """
 
 from datetime import date, timedelta
@@ -23,6 +26,7 @@ from schedule_analyzer import assignment_status
 from schedule_builder import (
     BREAK_LABEL,
     DEFAULT_MAX_CONSECUTIVE_MINUTES,
+    DEFAULT_MIN_SESSION_MINUTES,
     ScheduledBlock,
     ScheduleResult,
     _can_schedule_on,
@@ -1152,3 +1156,161 @@ def test_earlier_deadline_is_still_protected_with_a_maximum():
     result = build_schedule([physics, math], slots, today=MONDAY)
     assert entries(result, MONDAY) == [("Math", 120)]
     assert result.unscheduled == [(physics, 1.0)]
+
+
+# =====================================================================
+# Part 7 — minimum session length (v1.1, policy B)
+# =====================================================================
+#
+# build_schedule(min_session_minutes=...) refuses a chunk shorter than
+# the minimum unless it is the assignment's final piece, and refuses
+# any chunk after a break that is shorter than the break. A refused
+# chunk leaves the block idle for that assignment; the work is flagged
+# or placed later. None, the default, changes nothing.
+
+def minutes(m: int) -> float:
+    return m / 60
+
+
+def test_default_minimum_is_none_and_changes_nothing():
+    """Today's shape survives: a 10-minute final piece after a break is still placed."""
+    assert DEFAULT_MIN_SESSION_MINUTES is None
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    long_task = task("Long", TUESDAY, 1, Priority.HIGH)
+    a = task("A", TUESDAY, minutes(10))
+    result = build_schedule([long_task, a], slots, today=MONDAY)
+    assert entries(result, MONDAY) == [("Long", 60), ("Break", 15), ("A", 10)]
+    assert result == build_schedule([long_task, a], slots, today=MONDAY, min_session_minutes=None)
+
+
+@pytest.mark.parametrize("length", [60, 30, 29, 10])
+def test_an_assignment_alone_is_placed_whole_whatever_its_length(length):
+    """60 and 30 clear the minimum; 29 and 10 are placed because they are the final piece."""
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    result = build_schedule([task("A", TUESDAY, minutes(length))], slots, today=MONDAY, min_session_minutes=30)
+    assert entries(result, MONDAY) == [("A", length)]
+    assert result.unscheduled == []
+
+
+def test_a_two_hour_task_leaves_twenty_nine_free_minutes_idle():
+    """After Long 91, 29 minutes remain: a break plus 14 is under the minimum, so Big is refused."""
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    long_task = task("Long", TUESDAY, minutes(91), Priority.HIGH)
+    big = task("Big", TUESDAY, 2)
+    result = build_schedule([long_task, big], slots, today=MONDAY, min_session_minutes=30)
+    assert entries(result, MONDAY) == [("Long", 91)]
+    assert result.unscheduled == [(big, 2.0)]
+
+
+def test_a_two_hour_task_takes_forty_five_free_minutes_as_break_plus_thirty():
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    long_task = task("Long", TUESDAY, minutes(75), Priority.HIGH)
+    big = task("Big", TUESDAY, 2)
+    result = build_schedule([long_task, big], slots, today=MONDAY, min_session_minutes=30)
+    assert entries(result, MONDAY) == [("Long", 75), ("Break", 15), ("Big", 30)]
+    assert result.unscheduled == [(big, 1.5)]
+    assert_no_overlaps(result)
+
+
+def test_a_final_piece_after_a_break_is_placed_when_at_least_a_break_long():
+    """Long 60 then A 20: A's 20 minutes are its whole task and longer than the break."""
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    long_task = task("Long", TUESDAY, 1, Priority.HIGH)
+    a = task("A", TUESDAY, minutes(20))
+    result = build_schedule([long_task, a], slots, today=MONDAY, min_session_minutes=30)
+    assert entries(result, MONDAY) == [("Long", 60), ("Break", 15), ("A", 20)]
+    assert result.unscheduled == []
+
+
+@pytest.mark.parametrize("length", [10, 1])
+def test_no_break_is_paid_for_a_final_piece_shorter_than_a_break(length):
+    """Long 60 then A 10 (or 1): no Long / Break / A; the block ends after Long and A is flagged."""
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    long_task = task("Long", TUESDAY, 1, Priority.HIGH)
+    a = task("A", TUESDAY, minutes(length))
+    result = build_schedule([long_task, a], slots, today=MONDAY, min_session_minutes=30)
+    assert entries(result, MONDAY) == [("Long", 60)]
+    assert result.unscheduled == [(a, minutes(length))]
+
+
+def test_cap_remainder_under_the_minimum_moves_to_the_next_block_as_a_final_piece():
+    """130 minutes at cap 120: Monday 120, Tuesday the last 10 as its first chunk."""
+    slots = [slot(Weekday.MONDAY, 16, 18), slot(Weekday.TUESDAY, 16, 18)]
+    result = build_schedule([task("A", WEDNESDAY, minutes(130))], slots, today=MONDAY, min_session_minutes=30)
+    assert entries(result, MONDAY) == [("A", 120)]
+    assert entries(result, TUESDAY) == [("A", 10)]
+    assert result.unscheduled == []
+
+
+def test_a_ten_minute_remainder_that_finishes_a_task_may_precede_a_longer_one():
+    """Policy B, pinned: X's last 10 minutes complete X, and Y still gets its hour."""
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    x = task("X", TUESDAY, minutes(10))
+    y = task("Y", WEDNESDAY, 1)
+    result = build_schedule([x, y], slots, today=MONDAY, min_session_minutes=30)
+    assert entries(result, MONDAY) == [("X", 10), ("Break", 15), ("Y", 60)]
+    assert result.unscheduled == []
+
+
+def test_achievable_first_is_unchanged_by_the_minimum():
+    """The Part 4 example at a 30-minute minimum: identical to the default schedule."""
+    cs = task("CS Project", WEDNESDAY, 20, Priority.HIGH)
+    math = task("Pure Math", WEDNESDAY, 2, Priority.HIGH)
+    result = build_schedule([cs, math], SIX_HOURS, today=MONDAY, min_session_minutes=30)
+    assert entries(result, MONDAY) == [("Pure Math", 120), ("Break", 15), ("CS Project", 45)]
+    assert entries(result, TUESDAY) == [("CS Project", 120), ("Break", 15), ("CS Project", 45)]
+    assert unscheduled_of(result) == {"CS Project": 16.5}
+    assert result == build_schedule([cs, math], SIX_HOURS, today=MONDAY)
+
+
+def test_earlier_deadline_protection_is_unchanged_by_the_minimum():
+    slots = [slot(d, 16, 18) for d in (Weekday.MONDAY, Weekday.TUESDAY, Weekday.WEDNESDAY)]
+    physics = task("Physics", FRIDAY, 5, Priority.HIGH)
+    math = task("Math", THURSDAY, 2)
+    result = build_schedule([physics, math], slots, today=MONDAY, min_session_minutes=30)
+    assert entries(result, MONDAY) == [("Math", 120)]
+    assert entries(result, TUESDAY) == [("Physics", 120)]
+    assert entries(result, WEDNESDAY) == [("Physics", 120)]
+    assert result.unscheduled == [(physics, 1.0)]
+    assert result == build_schedule([physics, math], slots, today=MONDAY)
+
+
+def test_the_maximum_still_splits_long_blocks_with_a_minimum():
+    three = [slot(Weekday.MONDAY, 15, 18)]
+    result = build_schedule([task("A", TUESDAY, 3)], three, today=MONDAY, min_session_minutes=30)
+    assert entries(result, MONDAY) == [("A", 120), ("Break", 15), ("A", 45)]
+
+    four = [slot(Weekday.MONDAY, 14, 18)]
+    result = build_schedule([task("A", TUESDAY, 4)], four, today=MONDAY, min_session_minutes=30)
+    assert entries(result, MONDAY) == [("A", 120), ("Break", 15), ("A", 105)]
+
+
+def test_zero_break_with_a_minimum_places_pieces_back_to_back():
+    """No Break entries; the minimum still applies to non-final pieces."""
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    big = task("Big", TUESDAY, 2)
+    result = build_schedule([task("Long", TUESDAY, 1, Priority.HIGH), big], slots, today=MONDAY,
+                            break_minutes=0, min_session_minutes=30)
+    assert entries(result, MONDAY) == [("Long", 60), ("Big", 60)]
+    assert result.unscheduled == [(big, 1.0)]
+
+    result = build_schedule([task("Long", TUESDAY, minutes(100), Priority.HIGH), big], slots, today=MONDAY,
+                            break_minutes=0, min_session_minutes=30)
+    assert entries(result, MONDAY) == [("Long", 100)]              # 20 free is under the minimum
+    assert result.unscheduled == [(big, 2.0)]
+    for blocks in result.by_date.values():
+        assert all(b.label != BREAK_LABEL and b.end_minute > b.start_minute for b in blocks)
+
+
+def test_invalid_minimums_are_refused():
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    a = [task("A", TUESDAY, 1)]
+    for bad in (0, -1):
+        with pytest.raises(ValueError, match="min_session_minutes"):
+            build_schedule(a, slots, today=MONDAY, min_session_minutes=bad)
+    with pytest.raises(ValueError, match="min_session_minutes"):
+        build_schedule(a, slots, today=MONDAY, min_session_minutes=121)              # above the 120 cap
+    with pytest.raises(ValueError, match="min_session_minutes"):
+        build_schedule(a, slots, today=MONDAY, max_consecutive_minutes=90, min_session_minutes=91)
+    build_schedule(a, slots, today=MONDAY, min_session_minutes=120)                  # equal to the cap is fine
+    build_schedule(a, slots, today=MONDAY, max_consecutive_minutes=None, min_session_minutes=130)
