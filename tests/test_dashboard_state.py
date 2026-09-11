@@ -550,3 +550,110 @@ def test_save_failure_shows_a_message_and_keeps_the_form_open(monkeypatch):
     assert "could not save" in state.form_save_error
     assert state.form_name == "Chemistry Lab"          # nothing was thrown away
     assert storage.list_assignments() == []
+
+
+# ---------- Overdue dates (v1.1) ----------
+
+def past(days: int) -> str:
+    return (date.today() - timedelta(days=days)).isoformat()
+
+
+def test_adding_with_a_past_date_saves_and_says_so():
+    state = fresh_state()
+    state.open_form()
+    assert state.form_notice == ""
+    fill(state, name="History Essay", due=past(3), hours="1", priority="HIGH")
+    assert "already passed" in state.form_notice                 # shown while the form is open
+    assert all(v == "" for v in state.form_errors.values())      # not an error
+    toast = state.submit_form()
+    assert "History Essay" in str(toast.args) and "overdue" in str(toast.args)
+    assert any(r["name"] == "History Essay" for r in state.assignments)
+    assert state.form_open is False and state.form_notice == ""  # cleared with the form
+
+
+def test_notice_follows_the_chosen_date():
+    state = fresh_state()
+    state.open_form()
+    state.set_form_due(past(1))
+    assert state.form_notice != ""
+    state.set_form_due(date.today().isoformat())
+    assert state.form_notice == ""
+    state.set_form_due((date.today() + timedelta(days=2)).isoformat())
+    assert state.form_notice == ""
+    state.set_form_due("nonsense")
+    assert state.form_notice == ""
+    state.close_form()
+    assert state.form_notice == ""
+
+
+def test_future_dates_keep_the_plain_success_message():
+    state = fresh_state()
+    state.open_form()
+    fill(state, name="Normal", due=(date.today() + timedelta(days=4)).isoformat())
+    toast = state.submit_form()
+    assert "Added Normal" in str(toast.args) and "overdue" not in str(toast.args)
+
+
+def test_editing_to_a_past_date_saves_with_the_notice():
+    state = fresh_state()
+    row_id = add_one(state, name="Essay", days=3)
+    state.open_edit(row_id)
+    assert state.form_notice == ""
+    state.set_form_due(past(2))
+    assert "already passed" in state.form_notice
+    toast = state.submit_form()
+    assert "Saved changes to Essay" in str(toast.args) and "overdue" in str(toast.args)
+    assert next(r for r in state.assignments if r["id"] == row_id)["due"] == "Overdue by 2 days"
+
+
+def test_editing_other_fields_of_an_overdue_assignment_is_not_blocked():
+    state = fresh_state()
+    state.open_form()
+    fill(state, name="Late lab", due=past(5), hours="1")
+    state.submit_form()
+    row_id = next(r["id"] for r in state.assignments if r["name"] == "Late lab")
+    state.open_edit(row_id)
+    assert "already passed" in state.form_notice                 # the loaded date is in the past
+    state.set_form_hours("2.5")
+    toast = state.submit_form()
+    assert "Saved changes to Late lab" in str(toast.args)
+    assert next(r for r in state.assignments if r["id"] == row_id)["hours"] == "2.5 hours"
+
+
+def test_overdue_card_does_not_read_zero_days_left():
+    state = fresh_state()
+    state.open_form()
+    fill(state, name="Late lab", due=past(3), hours="1")
+    state.submit_form()
+    state.open_form()
+    fill(state, name="Today quiz", due=date.today().isoformat(), hours="1")
+    state.submit_form()
+    by_name = {r["name"]: r for r in state.assignments}
+    late, today_row = by_name["Late lab"], by_name["Today quiz"]
+    assert (late["due_number"], late["due_label"]) == ("3", "days overdue")
+    assert late["due"] == "Overdue by 3 days"
+    assert (today_row["due_number"], today_row["due_label"]) == ("Today", "due")
+    for r in (late, today_row):
+        assert (r["due_number"], r["due_label"]) != ("0", "days left")
+
+
+def test_engine_treatment_of_overdue_work_is_unchanged():
+    """Overdue work that fits is COMPLETE / LOW; overdue work that cannot fit is CRITICAL."""
+    state = fresh_state()
+    slot_on(0, 16, 18)
+    state.load_data()
+    state.open_form()
+    fill(state, name="Late essay", due=past(3), hours="1", priority="HIGH")
+    state.submit_form()
+    state.generate_study_plan()
+    row = next(r for r in state.plan_statuses if r.name == "Late essay")
+    assert (row.status, row.risk) == ("COMPLETE", "LOW")
+    assert state.today_plan and state.today_plan[0]["label"] == "Late essay"   # placed as soon as possible
+
+    state.open_form()
+    fill(state, name="Late thesis", due=past(10), hours="6", priority="HIGH")
+    state.submit_form()
+    state.generate_study_plan()
+    by_name = {r.name: r for r in state.plan_statuses}
+    assert by_name["Late essay"].status == "COMPLETE"
+    assert by_name["Late thesis"].status == "PARTIAL" and by_name["Late thesis"].risk == "CRITICAL"
