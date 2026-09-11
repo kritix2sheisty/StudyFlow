@@ -130,14 +130,18 @@ def test_max_consecutive_minutes_passes_through_to_the_builder():
 
 
 def test_min_session_minutes_passes_through_to_the_builder():
-    """Long 60 then a 10-minute task: placed after a break by default, refused at a 30-minute minimum."""
+    """
+    Long 60 then a 10-minute task: refused by the default 30-minute
+    minimum, placed after a break when no minimum is asked for.
+    """
     slots = [slot(Weekday.MONDAY, 16, 18)]
     assignments = [task("Long", 1, priority=Priority.HIGH), task("Tiny", 10 / 60)]
-    default = generate_study_plan(assignments, slots, today=MONDAY)
-    assert [b.label for b in default.schedule.by_date[MONDAY]] == ["Long", "Break", "Tiny"]
-    assert default.unscheduled_hours == 0.0
+    unlimited = generate_study_plan(assignments, slots, today=MONDAY, min_session_minutes=None)
+    assert [b.label for b in unlimited.schedule.by_date[MONDAY]] == ["Long", "Break", "Tiny"]
+    assert unlimited.unscheduled_hours == 0.0
 
-    strict = generate_study_plan(assignments, slots, today=MONDAY, min_session_minutes=30)
+    strict = generate_study_plan(assignments, slots, today=MONDAY)          # the default, 30
+    assert strict.schedule == generate_study_plan(assignments, slots, today=MONDAY, min_session_minutes=30).schedule
     assert [b.label for b in strict.schedule.by_date[MONDAY]] == ["Long"]
     assert strict.unscheduled_hours == 10 / 60
     assert strict.schedule.unscheduled == build_schedule(

@@ -141,14 +141,19 @@ def test_everything_unscheduled_because_the_only_slot_is_after_the_deadline():
 # ---------- 5. Decimal-hour assignments ----------
 
 def test_decimal_hours():
-    """1.5h + 0.75h in a 2h slot: 1.5 + break + 0.25 placed, 0.5 flagged."""
+    """
+    1.5h + 0.75h in a 2h slot. After Physics and a break only 15
+    minutes remain, under the 30-minute minimum session and not
+    Math's final piece (45 needed), so Math is refused: 1.5 placed,
+    0.75 flagged. The numbers are still hours to two decimals.
+    """
     slots = [slot(Weekday.MONDAY, 16, 18)]
     assignments = [task("Physics", 1.5, priority=Priority.HIGH), task("Math", 0.75)]
     result = build_schedule(assignments, slots, today=MONDAY, break_minutes=15)
-    assert total_scheduled_hours(result) == 1.75
-    assert total_unscheduled_hours(result) == 0.5
+    assert total_scheduled_hours(result) == 1.5
+    assert total_unscheduled_hours(result) == 0.75
     assert total_required_hours(assignments) == 2.25
-    assert completion_percentage(result, assignments) == pytest.approx(77.778, abs=0.001)
+    assert completion_percentage(result, assignments) == pytest.approx(66.667, abs=0.001)
 
 
 # ---------- Rules the numbers depend on ----------

@@ -43,8 +43,8 @@ guaranteed to be the best possible schedule (see "Limitations").
      unless it is the assignment's last piece, and a chunk after a
      break is also at least a break long. A chunk that would be
      shorter is refused: the block is left for that assignment and
-     the work is placed later or flagged. None means no minimum
-     (v1.1, policy B).
+     the work is placed later or flagged. The v1.1 default is 30
+     minutes; None means no minimum (policy B).
   6. Whatever could not be placed is reported as unscheduled, with the
      hours left over, rather than shrinking estimates or refusing to
      build a partial schedule.
@@ -107,7 +107,7 @@ Rules settled in the Phase 3 review:
     without a break; a slot boundary is treated as the student's own
     pause. With break_minutes=0 there is no break to insert, so the
     cap has no effect.
-  - Minimum session length (v1.1, configurable, off by default).
+  - Minimum session length (v1.1, configurable, 30 minutes by default).
     With `min_session_minutes` set, a session is never shorter than
     the minimum except when it is the assignment's final piece: a
     10-minute assignment alone is still scheduled, and the last 10
@@ -154,9 +154,9 @@ DEFAULT_DAYS_AHEAD = 7
 # (the 3-hour weekend blocks) are split, e.g. 120 / break / 45.
 DEFAULT_MAX_CONSECUTIVE_MINUTES: Optional[int] = 120
 # Shortest session allowed, except for an assignment's final piece;
-# None means no minimum. The student-facing value is a separate
-# decision; the mechanism is here so it can be set.
-DEFAULT_MIN_SESSION_MINUTES: Optional[int] = None
+# None means no minimum. v1.1 sets 30 minutes: 15 is too short to
+# settle into, 45-60 is a normal session, 120 is the cap.
+DEFAULT_MIN_SESSION_MINUTES: Optional[int] = 30
 BREAK_LABEL = "Break"
 
 
@@ -394,8 +394,8 @@ def build_schedule(
     (120 by default); None leaves runs unlimited. A cap below the break
     length is refused with a ValueError (ignored when breaks are 0).
     `min_session_minutes` is the shortest session other than an
-    assignment's final piece; None (the default) means no minimum. It
-    must be at least 1 and no more than the cap when one is set.
+    assignment's final piece (30 by default); None means no minimum.
+    It must be at least 1 and no more than the cap when one is set.
 
     See the module docstring for the algorithm. Assignments are
     placed earliest deadline first; within one deadline, those that
