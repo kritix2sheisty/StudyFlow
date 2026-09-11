@@ -113,7 +113,9 @@ class DashboardState(rx.State):
         The scheduling inputs changed, so the generated plan no longer
         describes them. Clear every generated value and say why; the
         student regenerates explicitly, so their schedule never changes
-        under them.
+        under them. Callers invoke this only after storage reports a
+        real change (a saved row, a completed row, a deleted row); a
+        failed or no-op operation leaves the plan alone.
         """
         had_plan = self.has_plan
         self.has_plan = False
@@ -129,6 +131,9 @@ class DashboardState(rx.State):
         if had_plan:
             self.plan_stale = True
             self.plan_message = STALE_MESSAGE.format(what=what)
+        elif self.plan_stale and what not in self.plan_message:
+            # Already stale for the other reason; now both have changed.
+            self.plan_message = STALE_MESSAGE.format(what="assignments and study times")
     plan_days: list[Day] = []
     today_plan: list[dict[str, str]] = []
     plan_statuses: list[StatusRow] = []
@@ -421,7 +426,12 @@ class DashboardState(rx.State):
         try:
             if self.is_editing:
                 assignment.id = int(self.editing_id)
-                update_assignment(assignment)
+                if not update_assignment(assignment):
+                    # No row changed, so nothing the plan depends on did:
+                    # the plan stays, the list refreshes, the form stays open.
+                    self.load_assignments()
+                    self.form_save_error = "That assignment no longer exists. Close the form and add it again."
+                    return
                 message = f"Saved changes to {assignment.name}."
             else:
                 add_assignment(assignment)
@@ -437,9 +447,14 @@ class DashboardState(rx.State):
     # ---- Complete and delete ----
 
     def complete_assignment(self, assignment_id: str):
-        """Mark it done; it leaves the active list but stays in the database."""
-        mark_assignment_complete(int(assignment_id), True)
+        """
+        Mark it done; it leaves the active list but stays in the
+        database. The plan is invalidated only if a row really changed.
+        """
+        updated = mark_assignment_complete(int(assignment_id), True)
         self.load_assignments()
+        if not updated:
+            return rx.toast.info("That assignment was already gone.")
         self._invalidate_plan("assignments")
         return rx.toast.success("Marked complete. Nice work.")
 
