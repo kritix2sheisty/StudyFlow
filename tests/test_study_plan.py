@@ -103,12 +103,22 @@ def test_builder_options_pass_through():
 
 
 def test_max_consecutive_minutes_passes_through_to_the_builder():
-    """A 3h assignment in a 3h block: one chunk by default, split with a cap break at 90."""
+    """
+    A 3h assignment in a 3h block: 120 / Break / 45 by default (the
+    v1.1 two-hour maximum), one chunk when None is asked for, and
+    90 / Break / 75 at 90.
+    """
     slots = [slot(Weekday.MONDAY, 15, 18)]
     assignments = [task("Long", 3)]
-    plain = generate_study_plan(assignments, slots, today=MONDAY)
-    assert [b.label for b in plain.schedule.by_date[MONDAY]] == ["Long"]
-    assert plain.unscheduled_hours == 0.0
+    default = generate_study_plan(assignments, slots, today=MONDAY)
+    assert [(b.label, b.end_minute - b.start_minute) for b in default.schedule.by_date[MONDAY]] == [
+        ("Long", 120), ("Break", 15), ("Long", 45),
+    ]
+    assert default.unscheduled_hours == 0.25
+
+    unlimited = generate_study_plan(assignments, slots, today=MONDAY, max_consecutive_minutes=None)
+    assert [b.label for b in unlimited.schedule.by_date[MONDAY]] == ["Long"]
+    assert unlimited.unscheduled_hours == 0.0
 
     capped = generate_study_plan(assignments, slots, today=MONDAY, max_consecutive_minutes=90)
     assert [(b.label, b.end_minute - b.start_minute) for b in capped.schedule.by_date[MONDAY]] == [

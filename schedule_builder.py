@@ -37,8 +37,8 @@ guaranteed to be the best possible schedule (see "Limitations").
   5b. If `max_consecutive_minutes` is set, no run of work inside one
      block exceeds it: when an assignment reaches the cap with work
      left, the same break is inserted (same length, same floor) and
-     the same assignment continues after it. None, the default, means
-     no cap (v1.1).
+     the same assignment continues after it. The v1.1 default is
+     120 minutes; None means no cap.
   6. Whatever could not be placed is reported as unscheduled, with the
      hours left over, rather than shrinking estimates or refusing to
      build a partial schedule.
@@ -89,12 +89,13 @@ Rules settled in the Phase 3 review:
     setting, and the first chunk in an empty block is not subject to
     it. With break_minutes=0 chunks sit back to back and no Break
     entry is written.
-  - Maximum consecutive study time (v1.1, configurable, off by
+  - Maximum consecutive study time (v1.1, configurable, two hours by
     default). A run of work inside one block never exceeds
     `max_consecutive_minutes`; an assignment longer than that gets a
     break and carries on. Breaks inserted this way consume capacity
     like any other: a 3-hour assignment no longer fits a 3-hour block
-    at a 90-minute cap (90 / break / 75, 15 minutes left over). The
+    (120 / break / 45, 15 minutes left over). A 2-hour block is never
+    split by the cap, only by a change of assignment. The
     counter belongs to each block, so two touching slots (4-5 and
     5-6 PM) are two blocks and a 2-hour assignment may run across them
     without a break; a slot boundary is treated as the student's own
@@ -132,9 +133,10 @@ from scheduler import prioritize_assignments
 DEFAULT_BREAK_MINUTES = 15
 DEFAULT_DAYS_AHEAD = 7
 # Longest run of work allowed inside one block before a break is
-# inserted. None means no limit. The student-facing value is a
-# separate decision; the mechanism is here so it can be set.
-DEFAULT_MAX_CONSECUTIVE_MINUTES: Optional[int] = None
+# inserted; None means no limit. v1.1 sets two hours: a student's
+# usual 2-hour weekday block is untouched, and only longer stints
+# (the 3-hour weekend blocks) are split, e.g. 120 / break / 45.
+DEFAULT_MAX_CONSECUTIVE_MINUTES: Optional[int] = 120
 BREAK_LABEL = "Break"
 
 
@@ -352,8 +354,8 @@ def build_schedule(
 ) -> ScheduleResult:
     """
     Build a deadline-aware schedule for the next `days_ahead` days.
-    `max_consecutive_minutes` caps a run of work inside one block;
-    None (the default) leaves runs unlimited. A cap below the break
+    `max_consecutive_minutes` caps a run of work inside one block
+    (120 by default); None leaves runs unlimited. A cap below the break
     length is refused with a ValueError (ignored when breaks are 0).
 
     See the module docstring for the algorithm. Assignments are
