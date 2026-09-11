@@ -34,6 +34,11 @@ guaranteed to be the best possible schedule (see "Limitations").
      `break_minutes`. A break is never shortened, and the chunk after
      it is at least as long as the break; if both would not fit, the
      leftover minutes stay free.
+  5b. If `max_consecutive_minutes` is set, no run of work inside one
+     block exceeds it: when an assignment reaches the cap with work
+     left, the same break is inserted (same length, same floor) and
+     the same assignment continues after it. None, the default, means
+     no cap (v1.1).
   6. Whatever could not be placed is reported as unscheduled, with the
      hours left over, rather than shrinking estimates or refusing to
      build a partial schedule.
@@ -84,6 +89,17 @@ Rules settled in the Phase 3 review:
     setting, and the first chunk in an empty block is not subject to
     it. With break_minutes=0 chunks sit back to back and no Break
     entry is written.
+  - Maximum consecutive study time (v1.1, configurable, off by
+    default). A run of work inside one block never exceeds
+    `max_consecutive_minutes`; an assignment longer than that gets a
+    break and carries on. Breaks inserted this way consume capacity
+    like any other: a 3-hour assignment no longer fits a 3-hour block
+    at a 90-minute cap (90 / break / 75, 15 minutes left over). The
+    counter belongs to each block, so two touching slots (4-5 and
+    5-6 PM) are two blocks and a 2-hour assignment may run across them
+    without a break; a slot boundary is treated as the student's own
+    pause. With break_minutes=0 there is no break to insert, so the
+    cap has no effect.
   - Within one due date, work that can still be finished is placed
     before work that cannot (v1.1). Between due dates, EDF holds.
 
@@ -115,6 +131,10 @@ from scheduler import prioritize_assignments
 
 DEFAULT_BREAK_MINUTES = 15
 DEFAULT_DAYS_AHEAD = 7
+# Longest run of work allowed inside one block before a break is
+# inserted. None means no limit. The student-facing value is a
+# separate decision; the mechanism is here so it can be set.
+DEFAULT_MAX_CONSECUTIVE_MINUTES: Optional[int] = None
 BREAK_LABEL = "Break"
 
 
@@ -140,13 +160,17 @@ class ScheduleResult:
 class _WorkBlock:
     """
     Internal mutable tracker for one concrete occurrence of a TimeSlot
-    on one specific date — how much of it is left to fill.
+    on one specific date — how much of it is left to fill, and how
+    long the current run of work has been going. `run` counts work
+    minutes since the last break in this block only; a new block
+    always starts at 0, even when it touches the previous one.
     """
     def __init__(self, block_date: date, start_hour: int, end_hour: int):
         self.date = block_date
         self.start = start_hour * 60   # minutes since midnight
         self.end = end_hour * 60
         self.cursor = self.start       # moves forward as the block fills
+        self.run = 0                   # minutes of work since the last break
 
     @property
     def remaining(self) -> int:
@@ -253,9 +277,21 @@ def _place(
     today: date,
     break_minutes: int,
     result: ScheduleResult,
+    max_consecutive_minutes: Optional[int] = DEFAULT_MAX_CONSECUTIVE_MINUTES,
 ) -> None:
-    """Pour one assignment into the eligible blocks, earliest first."""
+    """
+    Pour one assignment into the eligible blocks, earliest first.
+
+    Inside a block the assignment is placed in runs of at most
+    `max_consecutive_minutes` (unlimited when None); between two runs
+    the normal break goes in, under the normal after-break floor, and
+    the assignment continues. A run always ends exactly where the
+    work ends: no break is ever added after the last chunk. When
+    `break_minutes` is 0 no break can be inserted, so the cap is
+    ignored rather than looping on a run that can never reset.
+    """
     remaining = round(assignment.estimated_hours * 60)
+    cap = max_consecutive_minutes if break_minutes > 0 else None
     if remaining <= 0:
         return
     # An assignment that is already overdue has no deadline left to
@@ -268,26 +304,31 @@ def _place(
             break
         if not overdue and not _can_schedule_on(assignment, block.date):
             continue   # this study period is after the due date: skip it
-        free = block.remaining
-        if free <= 0:
-            continue
+        while remaining > 0:
+            free = block.remaining
+            if free <= 0:
+                break
 
-        if block.has_work:
-            # A break separates this chunk from the previous one, and
-            # the chunk after it must be at least as long as the break:
-            # a full break is never paid for a shorter session. If the
-            # block has no room for both, skip it (v1.1). With no break
-            # configured, one minute of room is enough and no Break
-            # entry is written.
-            if free - break_minutes < max(break_minutes, 1):
-                continue
-            if break_minutes > 0:
-                _append(result, block, break_minutes, BREAK_LABEL)
-            free -= break_minutes
+            if block.has_work:
+                # A break separates this chunk from the previous one,
+                # whether that was another assignment or this one at
+                # the end of a full run. The chunk after it must be at
+                # least as long as the break: a full break is never
+                # paid for a shorter session. If the block has no room
+                # for both, leave it (v1.1). With no break configured,
+                # one minute of room is enough and no Break entry is
+                # written.
+                if free - break_minutes < max(break_minutes, 1):
+                    break
+                if break_minutes > 0:
+                    _append(result, block, break_minutes, BREAK_LABEL)
+                free -= break_minutes
 
-        chunk = min(remaining, free)
-        _append(result, block, chunk, assignment.name)
-        remaining -= chunk
+            chunk = min(remaining, free)
+            if cap is not None:
+                chunk = min(chunk, cap - block.run)
+            _append(result, block, chunk, assignment.name)
+            remaining -= chunk
 
     if remaining > 0:
         result.unscheduled.append((assignment, remaining / 60))
@@ -298,6 +339,7 @@ def _append(result: ScheduleResult, block: _WorkBlock, minutes: int, label: str)
     end = start + minutes
     result.by_date.setdefault(block.date, []).append(ScheduledBlock(start, end, label))
     block.cursor = end
+    block.run = 0 if label == BREAK_LABEL else block.run + minutes
 
 
 def build_schedule(
@@ -306,9 +348,13 @@ def build_schedule(
     today: Optional[date] = None,
     break_minutes: int = DEFAULT_BREAK_MINUTES,
     days_ahead: int = DEFAULT_DAYS_AHEAD,
+    max_consecutive_minutes: Optional[int] = DEFAULT_MAX_CONSECUTIVE_MINUTES,
 ) -> ScheduleResult:
     """
     Build a deadline-aware schedule for the next `days_ahead` days.
+    `max_consecutive_minutes` caps a run of work inside one block;
+    None (the default) leaves runs unlimited. A cap below the break
+    length is refused with a ValueError (ignored when breaks are 0).
 
     See the module docstring for the algorithm. Assignments are
     placed earliest deadline first; within one deadline, those that
@@ -317,13 +363,21 @@ def build_schedule(
     result.unscheduled, along with how many hours were left over.
     """
     today = today or date.today()
+    if (max_consecutive_minutes is not None and break_minutes > 0
+            and max_consecutive_minutes < break_minutes):
+        # A run shorter than a break would put a chunk below the
+        # after-break floor (or, at 0, never advance at all).
+        raise ValueError(
+            f"max_consecutive_minutes ({max_consecutive_minutes}) must be at least "
+            f"break_minutes ({break_minutes})"
+        )
     blocks = _generate_week_blocks(time_slots, today, days_ahead)
     result = ScheduleResult()
 
     ordered = _placement_order(assignments, today)
     for _, group in groupby(ordered, key=lambda a: _effective_due(a, today)):
         for assignment in _achievable_first(list(group), blocks, today):
-            _place(assignment, blocks, today, break_minutes, result)
+            _place(assignment, blocks, today, break_minutes, result, max_consecutive_minutes)
 
     _sort_days(result)
     return result

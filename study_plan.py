@@ -35,6 +35,7 @@ from schedule_analyzer import (
 from schedule_builder import (
     DEFAULT_BREAK_MINUTES,
     DEFAULT_DAYS_AHEAD,
+    DEFAULT_MAX_CONSECUTIVE_MINUTES,
     ScheduleResult,
     build_schedule,
     format_timetable,
@@ -63,13 +64,15 @@ def generate_study_plan(
     today: Optional[date] = None,
     break_minutes: int = DEFAULT_BREAK_MINUTES,
     days_ahead: int = DEFAULT_DAYS_AHEAD,
+    max_consecutive_minutes: Optional[int] = DEFAULT_MAX_CONSECUTIVE_MINUTES,
 ) -> StudyPlan:
     """
     Prioritize, schedule, analyze, flag. Returns a StudyPlan holding
     the results of each step together.
 
     `today` defaults to the real date, as it does for the scheduler;
-    pass it explicitly in tests.
+    pass it explicitly in tests. The builder options (`break_minutes`,
+    `days_ahead`, `max_consecutive_minutes`) are forwarded unchanged.
     """
     today = today or date.today()
     assignments = list(assignments)
@@ -78,6 +81,7 @@ def generate_study_plan(
     schedule = build_schedule(
         assignments, time_slots, today=today,
         break_minutes=break_minutes, days_ahead=days_ahead,
+        max_consecutive_minutes=max_consecutive_minutes,
     )
 
     return StudyPlan(
