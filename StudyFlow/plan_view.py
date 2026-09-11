@@ -66,32 +66,49 @@ def totals(plan: StudyPlan) -> Dict[str, str]:
     }
 
 
-def status_rows(plan: StudyPlan, time_slots: Iterable[TimeSlot], today: date) -> List[Dict[str, str]]:
+@dataclass
+class StatusRow:
+    """How one assignment fared in the plan, ready for the page."""
+    id: str
+    name: str
+    subject: str
+    status: str         # COMPLETE / PARTIAL / UNSCHEDULED, from the analyzer
+    scheduled: str      # hours, one decimal
+    required: str
+    remaining: str
+    percent: int        # of this assignment's required hours that are scheduled
+    risk: str           # CRITICAL / HIGH / MODERATE / LOW, from the optimizer
+    due: str            # ISO date
+
+
+def status_rows(plan: StudyPlan, time_slots: Iterable[TimeSlot], today: date) -> List[StatusRow]:
     """
-    One row per active assignment: status from the analyzer, risk from
-    the optimizer. Nothing remaining gives an infinite ratio, which
-    risk_level() reports as LOW.
+    One row per active assignment: status and percent from the
+    analyzer, risk from the optimizer. Nothing remaining gives an
+    infinite ratio, which risk_level() reports as LOW.
     """
     slots = list(time_slots)
     rows = []
     for row in plan.analyses:
         ratio = deadline_risk_ratio(row.assignment, plan.schedule, slots, today)
-        rows.append({
-            "id": str(row.assignment.id) if row.assignment.id is not None else "",
-            "name": row.assignment.name,
-            "status": row.status,
-            "scheduled": f"{row.scheduled_hours:.1f}",
-            "required": f"{row.required_hours:.1f}",
-            "remaining": f"{row.remaining_hours:.1f}",
-            "risk": risk_level(ratio),
-            "due": row.assignment.due_date.isoformat(),
-        })
+        rows.append(StatusRow(
+            id=str(row.assignment.id) if row.assignment.id is not None else "",
+            name=row.assignment.name,
+            subject=row.assignment.subject,
+            status=row.status,
+            scheduled=f"{row.scheduled_hours:.1f}",
+            required=f"{row.required_hours:.1f}",
+            remaining=f"{row.remaining_hours:.1f}",
+            percent=round(row.percent_scheduled),
+            risk=risk_level(ratio),
+            due=row.assignment.due_date.isoformat(),
+        ))
     return rows
 
 
-def risk_by_name(rows: Iterable[Dict[str, str]]) -> Dict[str, str]:
+def risk_by_name(rows: Iterable[StatusRow]) -> Dict[str, str]:
     """Assignment name -> risk word, for stamping onto the assignment cards."""
-    return {r["name"]: r["risk"] for r in rows}
+    return {r.name: r.risk for r in rows}
 
 
 def has_unscheduled(plan: StudyPlan) -> bool:

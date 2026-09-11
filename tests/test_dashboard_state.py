@@ -338,11 +338,26 @@ def test_generate_places_the_work_into_the_saved_study_periods():
     assert (state.plan_required, state.plan_scheduled, state.plan_unscheduled, state.plan_completion) == ("7.0", "6.0", "1.0", "86")
     assert state.progress_value == 86
 
-    by_name = {r["name"]: r for r in state.plan_statuses}
-    assert by_name["Math"]["status"] == "COMPLETE"
-    assert by_name["Physics"]["status"] == "PARTIAL" and by_name["Physics"]["remaining"] == "1.0"
+    by_name = {r.name: r for r in state.plan_statuses}
+    assert by_name["Math"].status == "COMPLETE" and by_name["Math"].percent == 100
+    assert by_name["Physics"].status == "PARTIAL" and by_name["Physics"].remaining == "1.0"
+    assert by_name["Physics"].percent == 80
+    assert by_name["Physics"].subject == "Chemistry"          # fill()'s default subject
     # The assignment cards now carry the real risk instead of NOT RATED.
     assert {r["name"]: r["risk"] for r in state.assignments} == {"Math": "LOW", "Physics": "LOW"}
+
+
+def test_completed_assignments_are_counted_but_never_planned():
+    state = fresh_state()
+    slot_on(0, 16, 18)
+    row_id = add_one(state, name="Done", days=2)
+    state.complete_assignment(row_id)
+    add_one(state, name="Live", days=3, hours="1")
+    assert state.completed_names == ["Done"] and state.completed_count == "1"
+    assert state.assignment_count == "1"
+    state.generate_study_plan()
+    assert [r.name for r in state.plan_statuses] == ["Live"]
+    assert state.plan_required == "1.0" and state.plan_completion == "100"
 
 
 def test_generate_marks_work_that_cannot_fit_as_at_risk():
@@ -354,7 +369,7 @@ def test_generate_marks_work_that_cannot_fit_as_at_risk():
     state.generate_study_plan()
     assert state.has_plan is True
     row = state.plan_statuses[0]
-    assert row["status"] == "PARTIAL" and row["remaining"] == "4.0" and row["risk"] == "CRITICAL"
+    assert row.status == "PARTIAL" and row.remaining == "4.0" and row.risk == "CRITICAL"
     assert state.plan_completion == "33"
     assert state.assignments[0]["risk"] == "CRITICAL"
 

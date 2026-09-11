@@ -59,18 +59,23 @@ def test_totals_are_the_engines_numbers_as_strings(plan):
     assert plan_view.totals(plan) == {"required": "7.0", "scheduled": "6.0", "unscheduled": "1.0", "completion": "86"}
 
 
-def test_status_rows_carry_status_and_real_risk(plan):
+def test_status_rows_carry_status_percent_and_real_risk(plan):
     rows = plan_view.status_rows(plan, SLOTS, MONDAY)
-    by_name = {r["name"]: r for r in rows}
-    assert by_name["Math"]["status"] == "COMPLETE"
-    assert by_name["Math"]["remaining"] == "0.0"
-    assert by_name["Math"]["risk"] == "LOW"                 # nothing remaining -> infinite ratio -> LOW
-    assert by_name["Physics"]["status"] == "PARTIAL"
-    assert (by_name["Physics"]["scheduled"], by_name["Physics"]["required"], by_name["Physics"]["remaining"]) == ("4.0", "5.0", "1.0")
+    by_name = {r.name: r for r in rows}
+    math, physics = by_name["Math"], by_name["Physics"]
+    assert math.status == "COMPLETE" and math.remaining == "0.0" and math.percent == 100
+    assert math.risk == "LOW"                                 # nothing remaining -> infinite ratio -> LOW
+    assert math.subject == "Math"
+    assert physics.status == "PARTIAL"
+    assert (physics.scheduled, physics.required, physics.remaining) == ("4.0", "5.0", "1.0")
+    assert physics.percent == 80
     # 6h of study time exists before Friday for 1h remaining: ratio 6 -> LOW.
-    assert by_name["Physics"]["risk"] == "LOW"
-    assert by_name["Physics"]["id"] == "2" and by_name["Physics"]["due"] == "2026-08-21"
-    assert all(isinstance(v, str) for r in rows for v in r.values())
+    assert physics.risk == "LOW"
+    assert physics.id == "2" and physics.due == "2026-08-21"
+    for r in rows:
+        assert isinstance(r.percent, int)
+        assert all(isinstance(getattr(r, f), str) for f in ("id", "name", "subject", "status", "scheduled",
+                                                              "required", "remaining", "risk", "due"))
 
 
 def test_an_assignment_that_cannot_fit_is_partial_and_critical():
@@ -78,10 +83,21 @@ def test_an_assignment_that_cannot_fit_is_partial_and_critical():
     rush = Assignment(id=3, name="Rush", subject="R", due_date=MONDAY, estimated_hours=6)
     plan = generate_study_plan([rush], SLOTS, today=MONDAY)
     row = plan_view.status_rows(plan, SLOTS, MONDAY)[0]
-    assert row["status"] == "PARTIAL" and row["remaining"] == "4.0"
-    assert row["risk"] == "CRITICAL"
+    assert row.status == "PARTIAL" and row.remaining == "4.0" and row.percent == 33
+    assert row.risk == "CRITICAL"
     assert plan_view.has_unscheduled(plan)
     assert plan_view.totals(plan)["completion"] == "33"
+
+
+def test_a_completely_unscheduled_assignment_is_zero_percent():
+    """Only a Wednesday slot, but the work is due Tuesday: nothing can be placed."""
+    slots = [TimeSlot(id=9, weekday=Weekday.WEDNESDAY, start_hour=16, end_hour=18)]
+    essay = Assignment(id=4, name="Essay", subject="English", due_date=MONDAY + timedelta(days=1), estimated_hours=2)
+    plan = generate_study_plan([essay], slots, today=MONDAY)
+    row = plan_view.status_rows(plan, slots, MONDAY)[0]
+    assert row.status == "UNSCHEDULED" and row.percent == 0 and row.scheduled == "0.0"
+    assert row.risk == "CRITICAL"                             # no time before Tuesday at all
+    assert plan_view.totals(plan)["completion"] == "0"
 
 
 def test_risk_by_name(plan):
