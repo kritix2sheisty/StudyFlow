@@ -39,6 +39,12 @@ guaranteed to be the best possible schedule (see "Limitations").
      left, the same break is inserted (same length, same floor) and
      the same assignment continues after it. The v1.1 default is
      120 minutes; None means no cap.
+  5c. If `min_session_minutes` is set, a chunk is at least that long
+     unless it is the assignment's last piece, and a chunk after a
+     break is also at least a break long. A chunk that would be
+     shorter is refused: the block is left for that assignment and
+     the work is placed later or flagged. None means no minimum
+     (v1.1, policy B).
   6. Whatever could not be placed is reported as unscheduled, with the
      hours left over, rather than shrinking estimates or refusing to
      build a partial schedule.
@@ -101,6 +107,16 @@ Rules settled in the Phase 3 review:
     without a break; a slot boundary is treated as the student's own
     pause. With break_minutes=0 there is no break to insert, so the
     cap has no effect.
+  - Minimum session length (v1.1, configurable, off by default).
+    With `min_session_minutes` set, a session is never shorter than
+    the minimum except when it is the assignment's final piece: a
+    10-minute assignment alone is still scheduled, and the last 10
+    minutes of a 130-minute task still land in the next block. A
+    chunk after a break is also at least a break long, so no break
+    is ever paid for a shorter session. A refused chunk leaves the
+    minutes idle for that assignment; another assignment's final
+    piece may still use them. The minimum never reorders anything
+    and never takes time from another assignment.
   - Within one due date, work that can still be finished is placed
     before work that cannot (v1.1). Between due dates, EDF holds.
 
@@ -137,6 +153,10 @@ DEFAULT_DAYS_AHEAD = 7
 # usual 2-hour weekday block is untouched, and only longer stints
 # (the 3-hour weekend blocks) are split, e.g. 120 / break / 45.
 DEFAULT_MAX_CONSECUTIVE_MINUTES: Optional[int] = 120
+# Shortest session allowed, except for an assignment's final piece;
+# None means no minimum. The student-facing value is a separate
+# decision; the mechanism is here so it can be set.
+DEFAULT_MIN_SESSION_MINUTES: Optional[int] = None
 BREAK_LABEL = "Break"
 
 
@@ -280,6 +300,7 @@ def _place(
     break_minutes: int,
     result: ScheduleResult,
     max_consecutive_minutes: Optional[int] = DEFAULT_MAX_CONSECUTIVE_MINUTES,
+    min_session_minutes: Optional[int] = DEFAULT_MIN_SESSION_MINUTES,
 ) -> None:
     """
     Pour one assignment into the eligible blocks, earliest first.
@@ -291,6 +312,11 @@ def _place(
     work ends: no break is ever added after the last chunk. When
     `break_minutes` is 0 no break can be inserted, so the cap is
     ignored rather than looping on a run that can never reset.
+
+    With `min_session_minutes` set, a chunk is refused when it would
+    be shorter than the minimum (unless it finishes the assignment)
+    or, after a break, shorter than the break. The break is only
+    written once the chunk after it is known to be acceptable.
     """
     remaining = round(assignment.estimated_hours * 60)
     cap = max_consecutive_minutes if break_minutes > 0 else None
@@ -311,24 +337,33 @@ def _place(
             if free <= 0:
                 break
 
-            if block.has_work:
-                # A break separates this chunk from the previous one,
-                # whether that was another assignment or this one at
-                # the end of a full run. The chunk after it must be at
-                # least as long as the break: a full break is never
-                # paid for a shorter session. If the block has no room
-                # for both, leave it (v1.1). With no break configured,
-                # one minute of room is enough and no Break entry is
-                # written.
-                if free - break_minutes < max(break_minutes, 1):
-                    break
-                if break_minutes > 0:
-                    _append(result, block, break_minutes, BREAK_LABEL)
-                free -= break_minutes
-
-            chunk = min(remaining, free)
+            # A break separates this chunk from the previous one,
+            # whether that was another assignment or this one at the
+            # end of a full run; it resets the run, so the cap applies
+            # to the chunk in full. The chunk after a break must be at
+            # least as long as the break: a full break is never paid
+            # for a shorter session (v1.1). With no break configured,
+            # one minute of room is enough and no Break entry is
+            # written.
+            room = free - break_minutes if block.has_work else free
+            if block.has_work and room < max(break_minutes, 1):
+                break
+            chunk = min(remaining, room)
             if cap is not None:
-                chunk = min(chunk, cap - block.run)
+                chunk = min(chunk, cap)
+
+            if min_session_minutes:
+                # Policy B: at least the minimum, unless this piece
+                # finishes the assignment; after a break, also at
+                # least a break long.
+                floor = min(min_session_minutes, remaining)
+                if block.has_work:
+                    floor = max(floor, break_minutes)
+                if chunk < floor:
+                    break
+
+            if block.has_work and break_minutes > 0:
+                _append(result, block, break_minutes, BREAK_LABEL)
             _append(result, block, chunk, assignment.name)
             remaining -= chunk
 
@@ -351,12 +386,16 @@ def build_schedule(
     break_minutes: int = DEFAULT_BREAK_MINUTES,
     days_ahead: int = DEFAULT_DAYS_AHEAD,
     max_consecutive_minutes: Optional[int] = DEFAULT_MAX_CONSECUTIVE_MINUTES,
+    min_session_minutes: Optional[int] = DEFAULT_MIN_SESSION_MINUTES,
 ) -> ScheduleResult:
     """
     Build a deadline-aware schedule for the next `days_ahead` days.
     `max_consecutive_minutes` caps a run of work inside one block
     (120 by default); None leaves runs unlimited. A cap below the break
     length is refused with a ValueError (ignored when breaks are 0).
+    `min_session_minutes` is the shortest session other than an
+    assignment's final piece; None (the default) means no minimum. It
+    must be at least 1 and no more than the cap when one is set.
 
     See the module docstring for the algorithm. Assignments are
     placed earliest deadline first; within one deadline, those that
@@ -373,13 +412,22 @@ def build_schedule(
             f"max_consecutive_minutes ({max_consecutive_minutes}) must be at least "
             f"break_minutes ({break_minutes})"
         )
+    if min_session_minutes is not None:
+        if min_session_minutes < 1:
+            raise ValueError(f"min_session_minutes ({min_session_minutes}) must be at least 1")
+        if max_consecutive_minutes is not None and min_session_minutes > max_consecutive_minutes:
+            raise ValueError(
+                f"min_session_minutes ({min_session_minutes}) cannot exceed "
+                f"max_consecutive_minutes ({max_consecutive_minutes})"
+            )
     blocks = _generate_week_blocks(time_slots, today, days_ahead)
     result = ScheduleResult()
 
     ordered = _placement_order(assignments, today)
     for _, group in groupby(ordered, key=lambda a: _effective_due(a, today)):
         for assignment in _achievable_first(list(group), blocks, today):
-            _place(assignment, blocks, today, break_minutes, result, max_consecutive_minutes)
+            _place(assignment, blocks, today, break_minutes, result,
+                   max_consecutive_minutes, min_session_minutes)
 
     _sort_days(result)
     return result
