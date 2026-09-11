@@ -20,7 +20,7 @@ def test_state_exposes_the_vars_the_pages_bind_to():
         "assignments", "assignment_count", "required_hours", "greeting", "today_label",
         "completed_names", "completed_count",
         "slots", "slot_hours",
-        "has_plan", "plan_message", "plan_days", "today_plan", "plan_statuses",
+        "has_plan", "plan_stale", "plan_message", "plan_days", "today_plan", "plan_statuses",
         "plan_required", "plan_scheduled", "plan_unscheduled", "plan_completion", "progress_value",
     ):
         assert hasattr(DashboardState, name), name

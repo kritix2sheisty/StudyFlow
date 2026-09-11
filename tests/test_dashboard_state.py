@@ -390,6 +390,103 @@ def test_generate_failure_keeps_the_dashboard_usable(monkeypatch):
     assert state.assignments                       # still loaded and usable
 
 
+# ---------- Plan invalidation ----------
+
+def planned_state() -> DashboardState:
+    """A state with study time, two assignments and a generated plan."""
+    state = fresh_state()
+    slot_on(0, 16, 18)
+    slot_on(1, 16, 18)
+    state.load_data()                                 # pick up the seeded slots, as a page load would
+    add_one(state, name="Math", days=3, hours="2", priority="MEDIUM")
+    add_one(state, name="Physics", days=4, hours="1", priority="HIGH")
+    state.generate_study_plan()
+    assert state.has_plan is True and state.plan_stale is False
+    assert all(r["risk"] == "LOW" for r in state.assignments)   # the plan stamped real risk
+    return state
+
+
+def assert_plan_cleared(state: DashboardState, what: str) -> None:
+    """Nothing generated is left to display, and the reason is stated."""
+    assert state.has_plan is False and state.plan_stale is True
+    assert what in state.plan_message and "needs to be regenerated" in state.plan_message
+    assert state.plan_days == [] and state.today_plan == [] and state.plan_statuses == []
+    assert (state.plan_required, state.plan_scheduled, state.plan_unscheduled, state.plan_completion) == ("0.0", "0.0", "0.0", "0")
+    assert state.progress_value == 0
+    assert all(r["risk"] == "NOT RATED" for r in state.assignments)
+
+
+def test_editing_an_assignment_invalidates_the_plan():
+    state = planned_state()
+    state.open_edit(state.assignments[0]["id"])
+    state.set_form_hours("5")
+    state.submit_form()
+    assert_plan_cleared(state, "assignments")
+
+
+def test_adding_an_assignment_invalidates_the_plan():
+    state = planned_state()
+    add_one(state, name="Essay", days=5, hours="1", priority="LOW")
+    assert_plan_cleared(state, "assignments")
+
+
+def test_completing_an_assignment_invalidates_the_plan():
+    state = planned_state()
+    state.complete_assignment(state.assignments[0]["id"])
+    assert_plan_cleared(state, "assignments")
+
+
+def test_deleting_an_assignment_invalidates_the_plan():
+    state = planned_state()
+    state.ask_delete(state.assignments[0]["id"], "Math")
+    state.confirm_delete()
+    assert_plan_cleared(state, "assignments")
+
+
+def test_adding_study_time_invalidates_the_plan():
+    state = planned_state()
+    add_slot(state, "Sunday", "9:00 AM", "11:00 AM")
+    assert_plan_cleared(state, "study times")
+
+
+def test_deleting_study_time_invalidates_the_plan():
+    state = planned_state()
+    state.ask_delete_slot(state.slots[0]["id"], "some slot")
+    state.confirm_delete_slot()
+    assert_plan_cleared(state, "study times")
+
+
+def test_regenerating_clears_the_stale_flag_and_uses_the_new_inputs():
+    state = planned_state()
+    state.complete_assignment(state.assignments[0]["id"])       # Math (2h) done; Physics (1h) left
+    state.generate_study_plan()
+    assert state.has_plan is True and state.plan_stale is False and state.plan_message == ""
+    assert state.plan_required == "1.0" and state.plan_scheduled == "1.0"
+
+
+def test_changes_before_any_plan_do_not_claim_a_plan_went_stale():
+    state = fresh_state()
+    slot_on(0, 16, 18)
+    add_one(state)
+    assert state.has_plan is False and state.plan_stale is False and state.plan_message == ""
+
+
+def test_a_failed_change_leaves_the_plan_alone():
+    """Validation failure changes nothing, so the plan stays."""
+    state = planned_state()
+    state.open_edit(state.assignments[0]["id"])
+    state.set_form_hours("not a number")
+    state.submit_form()
+    assert state.has_plan is True and state.plan_stale is False
+
+
+def test_cancelled_delete_leaves_the_plan_alone():
+    state = planned_state()
+    state.ask_delete(state.assignments[0]["id"], "Math")
+    state.cancel_delete()
+    assert state.has_plan is True and state.plan_stale is False
+
+
 def test_save_failure_shows_a_message_and_keeps_the_form_open(monkeypatch):
     import StudyFlow.StudyFlow as page
 

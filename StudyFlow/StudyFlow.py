@@ -68,6 +68,9 @@ RISK_INK = {risk: f"var(--{color}-11)" for risk, color in RISK_COLORS.items()}  
 # those pages exist.
 NAV_ITEMS = {"Dashboard": "/", "Assignments": "/assignments", "Schedule": "/schedule", "Progress": "/progress"}
 
+# Shown wherever a plan would be, once its inputs have changed.
+STALE_MESSAGE = "Your study plan needs to be regenerated. Your {what} changed since it was made."
+
 # Shared card styling: a subtle border that brightens on hover. No motion.
 CARD_STYLE = {
     "border": "1px solid var(--gray-5)",
@@ -103,6 +106,29 @@ class DashboardState(rx.State):
     # about it is stored in the database yet.
     has_plan: bool = False
     plan_message: str = ""                      # why there is no plan, or what went wrong
+    plan_stale: bool = False                    # a plan existed, then its inputs changed
+
+    def _invalidate_plan(self, what: str):
+        """
+        The scheduling inputs changed, so the generated plan no longer
+        describes them. Clear every generated value and say why; the
+        student regenerates explicitly, so their schedule never changes
+        under them.
+        """
+        had_plan = self.has_plan
+        self.has_plan = False
+        self.plan_days = []
+        self.today_plan = []
+        self.plan_statuses = []
+        self.plan_required = "0.0"
+        self.plan_scheduled = "0.0"
+        self.plan_unscheduled = "0.0"
+        self.plan_completion = "0"
+        # The cards' risk badges came from the plan too.
+        self.assignments = [{**row, "risk": forms.RISK_NOT_RATED} for row in self.assignments]
+        if had_plan:
+            self.plan_stale = True
+            self.plan_message = STALE_MESSAGE.format(what=what)
     plan_days: list[Day] = []
     today_plan: list[dict[str, str]] = []
     plan_statuses: list[StatusRow] = []
@@ -192,6 +218,7 @@ class DashboardState(rx.State):
             self.slot_save_error = "StudyFlow could not save that study time. Please try again."
             return
         self.load_slots()
+        self._invalidate_plan("study times")
         label = f"{self.slot_weekday} {self.slot_start} – {self.slot_end}"
         self.close_slot_form()
         return rx.toast.success(f"Added {label}.")
@@ -221,6 +248,7 @@ class DashboardState(rx.State):
         self.load_slots()
         if not deleted:
             return rx.toast.info(f"{label} was already gone.")
+        self._invalidate_plan("study times")
         return rx.toast.success(f"Removed {label}.")
 
     @rx.var
@@ -278,6 +306,8 @@ class DashboardState(rx.State):
         self.plan_unscheduled = numbers["unscheduled"]
         self.plan_completion = numbers["completion"]
         self.has_plan = True
+        self.plan_stale = False
+        self.plan_message = ""
 
         # Stamp the real risk onto the assignment cards.
         risk = plan_view.risk_by_name(statuses)
@@ -400,6 +430,7 @@ class DashboardState(rx.State):
             self.form_save_error = "StudyFlow could not save that assignment. Please try again."
             return
         self.load_assignments()
+        self._invalidate_plan("assignments")
         self.close_form()
         return rx.toast.success(message)
 
@@ -409,6 +440,7 @@ class DashboardState(rx.State):
         """Mark it done; it leaves the active list but stays in the database."""
         mark_assignment_complete(int(assignment_id), True)
         self.load_assignments()
+        self._invalidate_plan("assignments")
         return rx.toast.success("Marked complete. Nice work.")
 
     # Delete asks first. These hold what the confirmation is about.
@@ -438,6 +470,7 @@ class DashboardState(rx.State):
         self.load_assignments()
         if not deleted:
             return rx.toast.info(f"{name} was already gone.")
+        self._invalidate_plan("assignments")
         return rx.toast.success(f"Deleted {name}.")
 
 
@@ -591,11 +624,13 @@ def overview_cards() -> rx.Component:
 
 def call_to_action() -> rx.Component:
     """The primary action, given its own highlighted band so it is the focus of the page."""
+    s = DashboardState
     return rx.card(
         rx.flex(
             rx.vstack(
-                rx.heading("Ready to plan your week?", size="5"),
-                rx.text("StudyFlow places your work around your free time and flags anything at risk.",
+                rx.heading(rx.cond(s.plan_stale, "Your plan needs regenerating", "Ready to plan your week?"), size="5"),
+                rx.text(rx.cond(s.plan_stale, s.plan_message,
+                                "StudyFlow places your work around your free time and flags anything at risk."),
                         size="2", color_scheme="gray"),
                 spacing="1", align="start",
             ),
@@ -742,9 +777,11 @@ def todays_plan() -> rx.Component:
                     ),
                 ),
                 rx.vstack(
-                    rx.text("No plan yet.", weight="medium"),
-                    rx.text("Press Generate Study Plan to place your work into your study time.",
-                            size="2", color_scheme="gray"),
+                    rx.text(rx.cond(s.plan_stale, "Your study plan needs to be regenerated.", "No plan yet."),
+                            weight="medium"),
+                    rx.text(rx.cond(s.plan_stale, s.plan_message,
+                                    "Press Generate Study Plan to place your work into your study time."),
+                            size="2", color_scheme="gray", text_align="center"),
                     spacing="1", align="center", padding_y="4", width="100%",
                 ),
             ),
@@ -789,7 +826,8 @@ def progress_section() -> rx.Component:
                 ),
                 rx.cond(
                     ~s.has_plan,
-                    rx.text("Generate a study plan to fill these in.", size="1", color_scheme="gray"),
+                    rx.text(rx.cond(s.plan_stale, s.plan_message, "Generate a study plan to fill these in."),
+                            size="1", color_scheme="gray"),
                 ),
                 spacing="3", align="start", width="100%",
             ),
@@ -1214,7 +1252,8 @@ def schedule_page() -> rx.Component:
                     rx.card(
                         rx.vstack(
                             rx.icon("calendar_days", size=28, color=rx.color("gray", 9)),
-                            rx.text("No study plan yet.", weight="medium"),
+                            rx.text(rx.cond(s.plan_stale, "Your study plan needs to be regenerated.", "No study plan yet."),
+                                    weight="medium"),
                             rx.text(rx.cond(s.plan_message != "", s.plan_message,
                                             "Generate one and your week will appear here."),
                                     size="2", color_scheme="gray", text_align="center"),
@@ -1335,7 +1374,9 @@ def progress_page() -> rx.Component:
     no_plan = rx.card(
         rx.vstack(
             rx.icon("sparkles", size=28, color=rx.color("gray", 9)),
-            rx.text("Generate a study plan to see your progress.", weight="medium"),
+            rx.text(rx.cond(s.plan_stale, "Your study plan needs to be regenerated.",
+                            "Generate a study plan to see your progress."), weight="medium"),
+            rx.cond(s.plan_stale, rx.text(s.plan_message, size="2", color_scheme="gray", text_align="center")),
             rx.button(rx.icon("sparkles", size=18), "Generate Study Plan", size="3", on_click=s.generate_study_plan),
             spacing="3", align="center", padding_y="6",
         ),
