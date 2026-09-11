@@ -9,7 +9,9 @@ and break behaviour at the edges of a slot. Part 4 is the v1.1
 achievable-first rule: within one due date, work that can still be
 finished is placed before work that cannot. Part 5 is the v1.1
 break-aware chunk floor: a chunk placed after a break is at least as
-long as the break.
+long as the break. Part 6 is the v1.1 configurable maximum
+consecutive study time: a run of work inside one block is capped, and
+the same assignment continues after a break.
 """
 
 from datetime import date, timedelta
@@ -20,6 +22,7 @@ from models import Assignment, Priority, TimeSlot, Weekday
 from schedule_analyzer import assignment_status
 from schedule_builder import (
     BREAK_LABEL,
+    DEFAULT_MAX_CONSECUTIVE_MINUTES,
     ScheduledBlock,
     ScheduleResult,
     _can_schedule_on,
@@ -857,3 +860,210 @@ def test_demo_week_has_no_short_session_after_a_break():
     assert result.unscheduled == []
     assert_no_short_session_after_a_break(result, 15)
     assert_no_overlaps(result)
+
+
+# =====================================================================
+# Part 6 — maximum consecutive study time (v1.1)
+# =====================================================================
+#
+# build_schedule(max_consecutive_minutes=...) caps how many minutes of
+# work may run inside one block without a break. When the cap is hit
+# with work left, the normal break is inserted (subject to the
+# after-break floor) and the same assignment carries on. None, the
+# default, means no cap and reproduces the schedules above exactly.
+
+def entries(result, day: date) -> list:
+    """(label, minutes) for each entry on `day`, in time order."""
+    return [(b.label, b.end_minute - b.start_minute) for b in result.by_date.get(day, [])]
+
+
+def test_default_maximum_is_none_and_means_unlimited():
+    """No cap by default: a 3h assignment in a 3h block is one 180-minute chunk, as before."""
+    assert DEFAULT_MAX_CONSECUTIVE_MINUTES is None
+    slots = [slot(Weekday.MONDAY, 15, 18)]
+    result = build_schedule([task("Long", TUESDAY, 3)], slots, today=MONDAY)
+    assert entries(result, MONDAY) == [("Long", 180)]
+    assert result.unscheduled == []
+    explicit = build_schedule([task("Long", TUESDAY, 3)], slots, today=MONDAY, max_consecutive_minutes=None)
+    assert entries(explicit, MONDAY) == [("Long", 180)]
+
+
+def test_three_hours_in_a_three_hour_block_is_split_at_ninety_minutes():
+    """
+    The brief's example: 3:00-4:30 work, 4:30-4:45 break, 4:45-6:00
+    work. The assignment gets 165 minutes in the block and 15 remain.
+    """
+    slots = [slot(Weekday.MONDAY, 15, 18)]
+    long_task = task("Mathematics IA", TUESDAY, 3)
+    result = build_schedule([long_task], slots, today=MONDAY, max_consecutive_minutes=90)
+
+    assert [(b.format_time_range(), b.label) for b in result.by_date[MONDAY]] == [
+        ("3 PM–4:30 PM", "Mathematics IA"),
+        ("4:30 PM–4:45 PM", "Break"),
+        ("4:45 PM–6 PM", "Mathematics IA"),
+    ]
+    assert minutes_of(result, MONDAY, "Mathematics IA") == 165
+    assert result.unscheduled == [(long_task, 0.25)]
+    assert_no_overlaps(result)
+
+
+def test_the_remainder_continues_in_the_next_block():
+    """With a Tuesday block available, the 15 minutes left over land there as its first chunk."""
+    slots = [slot(Weekday.MONDAY, 15, 18), slot(Weekday.TUESDAY, 16, 18)]
+    result = build_schedule([task("Long", WEDNESDAY, 3)], slots, today=MONDAY, max_consecutive_minutes=90)
+    assert entries(result, MONDAY) == [("Long", 90), ("Break", 15), ("Long", 75)]
+    assert entries(result, TUESDAY) == [("Long", 15)]
+    assert result.unscheduled == []
+
+
+def test_an_assignment_that_ends_exactly_at_the_maximum_gets_no_trailing_break():
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    result = build_schedule([task("Ninety", TUESDAY, 1.5)], slots, today=MONDAY, max_consecutive_minutes=90)
+    assert entries(result, MONDAY) == [("Ninety", 90)]
+    assert result.by_date[MONDAY][-1].end_minute == 17 * 60 + 30
+    assert result.unscheduled == []
+
+
+def test_adjacent_blocks_are_not_merged():
+    """
+    The run counter belongs to each block. Two touching one-hour slots
+    are two blocks, so a 2h assignment runs 120 minutes straight across
+    them even with a 90-minute maximum. The v1 decision, on purpose.
+    """
+    slots = [slot(Weekday.MONDAY, 16, 17), slot(Weekday.MONDAY, 17, 18)]
+    result = build_schedule([task("Two hours", TUESDAY, 2)], slots, today=MONDAY, max_consecutive_minutes=90)
+    assert entries(result, MONDAY) == [("Two hours", 60), ("Two hours", 60)]
+    first, second = result.by_date[MONDAY]
+    assert first.end_minute == second.start_minute == 17 * 60
+    assert result.unscheduled == []
+
+
+def test_switch_between_assignments_still_gets_its_break():
+    """Two assignments in a 2h block at max 90: the same A / Break / B shape as without a cap."""
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    a = task("A", TUESDAY, 1, Priority.HIGH)
+    b = task("B", TUESDAY, 1, Priority.LOW)
+    result = build_schedule([a, b], slots, today=MONDAY, max_consecutive_minutes=90)
+    assert entries(result, MONDAY) == [("A", 60), ("Break", 15), ("B", 45)]
+    assert result.unscheduled == [(b, 0.25)]
+    assert_no_overlaps(result)
+
+
+def test_four_hours_in_a_four_hour_block_takes_two_breaks():
+    slots = [slot(Weekday.MONDAY, 14, 18)]
+    long_task = task("Long", TUESDAY, 4)
+    result = build_schedule([long_task], slots, today=MONDAY, max_consecutive_minutes=90)
+    assert entries(result, MONDAY) == [("Long", 90), ("Break", 15), ("Long", 90), ("Break", 15), ("Long", 30)]
+    assert result.unscheduled == [(long_task, 0.5)]
+    assert_no_overlaps(result)
+
+
+def test_no_tiny_session_after_a_cap_break():
+    """
+    When the cap is hit and the room left cannot hold a break plus a
+    floor-length chunk, the block ends there and the minutes stay
+    idle. TimeSlots are whole hours, so the brief's 105-minute block
+    is modelled as a 2h block with a 105-minute maximum: 105 minutes
+    of work, then 15 idle, no break, no tiny chunk.
+    """
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    long_task = task("Long", TUESDAY, 3)
+    result = build_schedule([long_task], slots, today=MONDAY, max_consecutive_minutes=105)
+    assert entries(result, MONDAY) == [("Long", 105)]
+    assert result.by_date[MONDAY][-1].end_minute == 18 * 60 - 15
+    assert result.unscheduled == [(long_task, 1.25)]
+
+
+def test_cap_breaks_consume_capacity_before_a_deadline():
+    """2h due today in a 2h block at max 90: 1.75h scheduled, 0.25h unscheduled, PARTIAL."""
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    due_today = task("Due today", MONDAY, 2)
+    result = build_schedule([due_today], slots, today=MONDAY, max_consecutive_minutes=90)
+    assert entries(result, MONDAY) == [("Due today", 90), ("Break", 15), ("Due today", 15)]
+    assert minutes_of(result, MONDAY, "Due today") == 105
+    assert result.unscheduled == [(due_today, 0.25)]
+    assert assignment_status(result, due_today) == "PARTIAL"
+
+
+def test_zero_break_disables_the_maximum():
+    """
+    With no break to insert, the cap cannot be enforced, so it has no
+    effect: one 180-minute chunk, no Break entries, and the call
+    returns (a naive loop would spin forever here).
+    """
+    slots = [slot(Weekday.MONDAY, 15, 18)]
+    result = build_schedule([task("Long", TUESDAY, 3)], slots, today=MONDAY,
+                            break_minutes=0, max_consecutive_minutes=90)
+    assert entries(result, MONDAY) == [("Long", 180)]
+    assert result.unscheduled == []
+
+    a = task("A", TUESDAY, 1, Priority.HIGH)
+    b = task("B", TUESDAY, 1)
+    result = build_schedule([a, b], [slot(Weekday.MONDAY, 16, 18)], today=MONDAY,
+                            break_minutes=0, max_consecutive_minutes=90)
+    assert entries(result, MONDAY) == [("A", 60), ("B", 60)]
+    assert all(e.label != BREAK_LABEL for e in result.by_date[MONDAY])
+
+
+def test_a_maximum_below_the_break_length_is_refused():
+    """A cap shorter than a break would force chunks under the floor (or never advance at 0)."""
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    for bad in (0, 10):
+        with pytest.raises(ValueError, match="max_consecutive_minutes"):
+            build_schedule([task("T", TUESDAY, 1)], slots, today=MONDAY, max_consecutive_minutes=bad)
+    # Exactly the break length is allowed, and with no breaks the cap is simply ignored.
+    build_schedule([task("T", TUESDAY, 1)], slots, today=MONDAY, max_consecutive_minutes=15)
+    result = build_schedule([task("T", TUESDAY, 1)], slots, today=MONDAY, break_minutes=0, max_consecutive_minutes=0)
+    assert entries(result, MONDAY) == [("T", 60)]
+
+
+def test_run_counter_resets_after_a_switch_break():
+    """A 90 / Break / B 30 in a 3h block at max 90: B starts a fresh run, so no second break."""
+    slots = [slot(Weekday.MONDAY, 15, 18)]
+    a = task("A", TUESDAY, 1.5, Priority.HIGH)
+    b = task("B", TUESDAY, 0.5)
+    result = build_schedule([a, b], slots, today=MONDAY, max_consecutive_minutes=90)
+    assert entries(result, MONDAY) == [("A", 90), ("Break", 15), ("B", 30)]
+    assert result.unscheduled == []
+
+
+def test_achievable_first_holds_with_a_maximum():
+    """
+    The Part 4 example (CS 20h and Pure Math 2h, same deadline, two 3h
+    blocks) at max 120. Pure Math is still placed first and finishes
+    in one 120-minute run; CS gets everything left, now with a cap
+    break inside Tuesday: 45 + 120 + 45 = 210 minutes.
+    """
+    cs = task("CS Project", WEDNESDAY, 20, Priority.HIGH)
+    math = task("Pure Math", WEDNESDAY, 2, Priority.HIGH)
+    result = build_schedule([cs, math], SIX_HOURS, today=MONDAY, max_consecutive_minutes=120)
+    assert entries(result, MONDAY) == [("Pure Math", 120), ("Break", 15), ("CS Project", 45)]
+    assert entries(result, TUESDAY) == [("CS Project", 120), ("Break", 15), ("CS Project", 45)]
+    assert assignment_status(result, math) == "COMPLETE"
+    assert unscheduled_of(result) == {"CS Project": 16.5}
+    assert_no_overlaps(result)
+
+
+def test_earlier_deadline_is_still_protected_with_a_maximum():
+    """
+    Phase 3.2's scenario at max 90 (2h blocks Monday to Wednesday;
+    Math 2h due Thursday, Physics 5h HIGH due Friday). Math still
+    finishes first, now as 90 / Break / 15 on Monday and 15 more on
+    Tuesday; Physics takes what is left with a cap break in each of
+    its blocks, and the whole shortfall is still charged to Physics.
+    """
+    slots = [slot(d, 16, 18) for d in (Weekday.MONDAY, Weekday.TUESDAY, Weekday.WEDNESDAY)]
+    physics = task("Physics", FRIDAY, 5, Priority.HIGH)
+    math = task("Math", THURSDAY, 2)
+    result = build_schedule([physics, math], slots, today=MONDAY, max_consecutive_minutes=90)
+    assert entries(result, MONDAY) == [("Math", 90), ("Break", 15), ("Math", 15)]
+    assert entries(result, TUESDAY) == [("Math", 15), ("Break", 15), ("Physics", 90)]
+    assert entries(result, WEDNESDAY) == [("Physics", 90), ("Break", 15), ("Physics", 15)]
+    assert assignment_status(result, math) == "COMPLETE"
+    assert result.unscheduled == [(physics, 1.75)]
+    assert_no_overlaps(result)
+
+    # And with no cap the original expectations hold unchanged.
+    result = build_schedule([physics, math], slots, today=MONDAY)
+    assert entries(result, MONDAY) == [("Math", 120)]
+    assert result.unscheduled == [(physics, 1.0)]

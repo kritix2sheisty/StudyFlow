@@ -102,6 +102,23 @@ def test_builder_options_pass_through():
     assert "Break" not in [b.label for b in plan.schedule.by_date[MONDAY]]
 
 
+def test_max_consecutive_minutes_passes_through_to_the_builder():
+    """A 3h assignment in a 3h block: one chunk by default, split with a cap break at 90."""
+    slots = [slot(Weekday.MONDAY, 15, 18)]
+    assignments = [task("Long", 3)]
+    plain = generate_study_plan(assignments, slots, today=MONDAY)
+    assert [b.label for b in plain.schedule.by_date[MONDAY]] == ["Long"]
+    assert plain.unscheduled_hours == 0.0
+
+    capped = generate_study_plan(assignments, slots, today=MONDAY, max_consecutive_minutes=90)
+    assert [(b.label, b.end_minute - b.start_minute) for b in capped.schedule.by_date[MONDAY]] == [
+        ("Long", 90), ("Break", 15), ("Long", 75),
+    ]
+    assert capped.unscheduled_hours == 0.25
+    assert capped.schedule.unscheduled == build_schedule(
+        assignments, slots, today=MONDAY, max_consecutive_minutes=90).unscheduled
+
+
 def test_inputs_are_not_mutated():
     assignments, slots = week_example()
     before = [a.name for a in assignments]
