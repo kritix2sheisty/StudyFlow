@@ -107,6 +107,7 @@ class DashboardState(rx.State):
     has_plan: bool = False
     plan_message: str = ""                      # why there is no plan, or what went wrong
     plan_stale: bool = False                    # a plan existed, then its inputs changed
+    plan_fingerprint: str = ""                  # plan_view.plan_input_fingerprint() of the data the plan was built from
 
     def _invalidate_plan(self, what: str):
         """
@@ -119,6 +120,7 @@ class DashboardState(rx.State):
         """
         had_plan = self.has_plan
         self.has_plan = False
+        self.plan_fingerprint = ""
         self.plan_days = []
         self.today_plan = []
         self.plan_statuses = []
@@ -171,9 +173,30 @@ class DashboardState(rx.State):
         self.slot_hours = f"{study_time.total_hours(stored):g}"
 
     def load_data(self):
-        """Everything a page needs from the database; runs on page load."""
+        """
+        Everything a page needs from the database; runs on page load.
+
+        Then the freshness check (v1.2): a plan is shown only if the
+        database still holds exactly the data it was built from. The
+        mutation handlers invalidate explicitly; this is the safety net
+        for everything they cannot see, such as edits from another tab
+        or the CLI, or a state that came back older than the data.
+        """
         self.load_assignments()
         self.load_slots()
+        if not self.has_plan:
+            return
+        current = plan_view.plan_input_fingerprint(
+            list_assignments(include_completed=False), list_time_slots())
+        if current != self.plan_fingerprint:
+            self._invalidate_plan("assignments or study times")
+            return
+        # Same data: the plan stands, so the cards get its risk back
+        # (load_assignments() had reset them to NOT RATED).
+        risk = plan_view.risk_by_name(self.plan_statuses)
+        self.assignments = [
+            {**row, "risk": risk.get(row["name"], row["risk"])} for row in self.assignments
+        ]
 
     slot_form_open: bool = False
     slot_weekday: str = "Monday"
@@ -313,6 +336,7 @@ class DashboardState(rx.State):
         self.has_plan = True
         self.plan_stale = False
         self.plan_message = ""
+        self.plan_fingerprint = plan_view.plan_input_fingerprint(assignments, slots)
 
         # Stamp the real risk onto the assignment cards.
         risk = plan_view.risk_by_name(statuses)

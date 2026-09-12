@@ -657,3 +657,123 @@ def test_engine_treatment_of_overdue_work_is_unchanged():
     by_name = {r.name: r for r in state.plan_statuses}
     assert by_name["Late essay"].status == "COMPLETE"
     assert by_name["Late thesis"].status == "PARTIAL" and by_name["Late thesis"].risk == "CRITICAL"
+
+
+# ---------- Plan freshness: the fingerprint safety net (v1.2) ----------
+
+from StudyFlow import plan_view as _plan_view
+
+
+def current_fingerprint() -> str:
+    return _plan_view.plan_input_fingerprint(
+        storage.list_assignments(include_completed=False), storage.list_time_slots())
+
+
+def stored(name: str):
+    return next(a for a in storage.list_assignments() if a.name == name)
+
+
+def assert_plan_stale_after_load(state: DashboardState) -> None:
+    state.load_data()
+    assert_plan_cleared(state, "assignments or study times")
+    assert state.plan_fingerprint == ""
+
+
+def test_generating_stores_the_fingerprint_of_the_inputs_used():
+    state = planned_state()
+    assert state.plan_fingerprint == current_fingerprint() != ""
+
+
+def test_reloading_with_identical_data_keeps_the_plan_and_its_risks():
+    state = planned_state()
+    days_before, statuses_before, fp = state.plan_days, state.plan_statuses, state.plan_fingerprint
+    state.load_data()
+    assert state.has_plan is True and state.plan_stale is False and state.plan_message == ""
+    assert state.plan_days == days_before and state.plan_statuses == statuses_before
+    assert state.plan_fingerprint == fp
+    assert all(r["risk"] == "LOW" for r in state.assignments)        # re-stamped from the plan, not NOT RATED
+
+
+def test_changing_hours_in_the_database_makes_the_plan_stale():
+    state = planned_state()
+    a = stored("Math"); a.estimated_hours = 5; storage.update_assignment(a)
+    assert_plan_stale_after_load(state)
+
+
+def test_changing_a_due_date_in_the_database_makes_the_plan_stale():
+    state = planned_state()
+    a = stored("Math"); a.due_date = a.due_date + timedelta(days=2); storage.update_assignment(a)
+    assert_plan_stale_after_load(state)
+
+
+def test_adding_an_assignment_in_the_database_makes_the_plan_stale():
+    state = planned_state()
+    storage.add_assignment(storage.Assignment(name="Essay", subject="E", due_date=date.today() + timedelta(days=5),
+                                              estimated_hours=1, priority=storage.Priority.LOW))
+    assert_plan_stale_after_load(state)
+    assert any(r["name"] == "Essay" for r in state.assignments)      # the data itself is loaded
+
+
+def test_deleting_an_assignment_in_the_database_makes_the_plan_stale():
+    state = planned_state()
+    storage.delete_assignment(stored("Physics").id)
+    assert_plan_stale_after_load(state)
+    assert all(r["name"] != "Physics" for r in state.assignments)
+
+
+def test_completing_an_assignment_in_the_database_makes_the_plan_stale():
+    state = planned_state()
+    storage.mark_assignment_complete(stored("Math").id, True)
+    assert_plan_stale_after_load(state)
+
+
+def test_changing_a_slot_in_the_database_makes_the_plan_stale():
+    state = planned_state()
+    slot = storage.list_time_slots()[0]; slot.end_hour = 19; storage.update_time_slot(slot)
+    assert_plan_stale_after_load(state)
+
+
+def test_deleting_a_slot_in_the_database_makes_the_plan_stale():
+    state = planned_state()
+    storage.delete_time_slot(storage.list_time_slots()[0].id)
+    assert_plan_stale_after_load(state)
+    assert len(state.slots) == 1
+
+
+def test_stale_plan_leaves_nothing_for_the_pages_to_render():
+    state = planned_state()
+    storage.delete_assignment(stored("Physics").id)
+    state.load_data()
+    assert state.has_plan is False
+    assert state.plan_days == [] and state.today_plan == [] and state.plan_statuses == []
+    assert (state.plan_scheduled, state.plan_completion) == ("0.0", "0")
+    assert all(r["risk"] == "NOT RATED" for r in state.assignments)
+    assert "needs to be regenerated" in state.plan_message
+
+
+def test_explicit_invalidation_and_the_safety_net_agree():
+    """A change through the app invalidates first; a later load finds nothing to do."""
+    state = planned_state()
+    state.complete_assignment(state.assignments[0]["id"])
+    assert_plan_cleared(state, "assignments")
+    message = state.plan_message
+    state.load_data()
+    assert state.has_plan is False and state.plan_message == message  # not re-stamped with a second reason
+
+
+def test_regenerating_after_a_database_change_refreshes_the_fingerprint():
+    state = planned_state()
+    old = state.plan_fingerprint
+    storage.delete_assignment(stored("Physics").id)
+    state.load_data()
+    state.generate_study_plan()
+    assert state.has_plan is True and state.plan_fingerprint == current_fingerprint() != old
+
+
+def test_no_data_behaviour_is_unchanged_by_the_safety_net():
+    state = fresh_state()
+    state.load_data()                                  # nothing stored, no plan: nothing to compare
+    assert state.has_plan is False and state.plan_stale is False and state.plan_message == ""
+    state.generate_study_plan()
+    assert state.has_plan is False and "assignments" in state.plan_message
+    assert state.plan_fingerprint == ""

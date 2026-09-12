@@ -109,3 +109,48 @@ def test_guard_messages():
     assert "assignments" in plan_view.guard_message([], SLOTS)
     assert "study times" in plan_view.guard_message([MATH], [])
     assert plan_view.guard_message([MATH], SLOTS) == ""
+
+
+# ---------- Plan-input fingerprint (v1.2) ----------
+
+def test_fingerprint_is_deterministic_and_order_independent():
+    a = plan_view.plan_input_fingerprint([MATH, PHYSICS], SLOTS)
+    assert isinstance(a, str) and len(a) == 64                       # sha-256 hex
+    assert plan_view.plan_input_fingerprint([MATH, PHYSICS], SLOTS) == a
+    assert plan_view.plan_input_fingerprint([PHYSICS, MATH], list(reversed(SLOTS))) == a
+
+
+def test_fingerprint_changes_when_any_scheduling_input_changes():
+    from dataclasses import replace
+    base = plan_view.plan_input_fingerprint([MATH, PHYSICS], SLOTS)
+    changed = [
+        [replace(MATH, estimated_hours=3), PHYSICS],
+        [replace(MATH, due_date=FRIDAY), PHYSICS],
+        [replace(MATH, priority=Priority.HIGH), PHYSICS],
+        [replace(MATH, completed=True), PHYSICS],
+        [replace(MATH, name="Maths"), PHYSICS],
+        [replace(MATH, subject="Pure"), PHYSICS],
+        [replace(MATH, id=99), PHYSICS],
+        [MATH],                                                        # one removed
+        [MATH, PHYSICS, replace(MATH, id=3, name="Extra")],            # one added
+    ]
+    seen = {base}
+    for assignments in changed:
+        fp = plan_view.plan_input_fingerprint(assignments, SLOTS)
+        assert fp not in seen
+        seen.add(fp)
+    for slots in (
+        SLOTS[:-1],                                                    # a slot removed
+        SLOTS + [TimeSlot(id=9, weekday=Weekday.SUNDAY, start_hour=9, end_hour=11)],
+        [replace(SLOTS[0], end_hour=19)] + SLOTS[1:],
+        [replace(SLOTS[0], start_hour=15)] + SLOTS[1:],
+        [replace(SLOTS[0], weekday=Weekday.THURSDAY)] + SLOTS[1:],
+        [replace(SLOTS[0], id=42)] + SLOTS[1:],
+    ):
+        fp = plan_view.plan_input_fingerprint([MATH, PHYSICS], slots)
+        assert fp not in seen
+        seen.add(fp)
+
+
+def test_fingerprint_of_nothing_is_still_a_hash():
+    assert len(plan_view.plan_input_fingerprint([], [])) == 64

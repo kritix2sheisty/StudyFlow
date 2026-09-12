@@ -11,6 +11,8 @@ one place where the engine's dataclasses become page data, and it is
 unit-tested against the engine with a controlled example.
 """
 
+import hashlib
+import json
 from dataclasses import dataclass
 from datetime import date
 from typing import Dict, Iterable, List
@@ -122,3 +124,34 @@ def guard_message(assignments: List[Assignment], time_slots: List[TimeSlot]) -> 
     if not time_slots:
         return "Add your available study times before generating a study plan."
     return ""
+
+
+# ---------------------------------------------------------------------
+# Plan freshness
+# ---------------------------------------------------------------------
+
+def plan_input_fingerprint(assignments: Iterable[Assignment], time_slots: Iterable[TimeSlot]) -> str:
+    """
+    A SHA-256 hex digest of every stored value that can change a plan:
+    each assignment's id, name, subject, due date, hours, priority and
+    completed flag, and each slot's id, weekday and hours. The entries
+    are sorted before hashing, so database order does not matter.
+
+    It answers one question only: "is this the same input data that
+    produced the plan?" Compare the value saved when a plan was
+    generated with the value for the database now; if they differ the
+    plan describes data the student no longer has. It knows nothing
+    about how the plan is built.
+    """
+    payload = {
+        "assignments": sorted(
+            ([a.id, a.name, a.subject, a.due_date.isoformat(), float(a.estimated_hours),
+              int(a.priority), bool(a.completed)] for a in assignments),
+            key=repr,
+        ),
+        "slots": sorted(
+            ([t.id, int(t.weekday), t.start_hour, t.end_hour] for t in time_slots),
+            key=repr,
+        ),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
