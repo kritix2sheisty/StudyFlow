@@ -64,6 +64,20 @@ class Session:
     revoked_at: Optional[str]
 
 
+@dataclass
+class StoredPlan:
+    """
+    A student's last generated plan, as the JSON the API served, with
+    the fingerprint of the inputs it was built from. Not a second
+    schedule schema: the engine's output is kept whole and served only
+    while the fingerprint still matches the student's data.
+    """
+    user_id: str
+    fingerprint: str
+    generated_at: str
+    plan_json: str
+
+
 def set_db_path(path: Path) -> None:
     """Point storage at a different database file (used by tests)."""
     global DB_PATH
@@ -96,6 +110,15 @@ def init_db() -> None:
             email TEXT NOT NULL UNIQUE,
             created_at TEXT NOT NULL,
             password_hash TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS plans (
+            user_id TEXT PRIMARY KEY REFERENCES users(id),
+            fingerprint TEXT NOT NULL,
+            generated_at TEXT NOT NULL,
+            plan_json TEXT NOT NULL
         )
     """)
 
@@ -261,6 +284,30 @@ def revoke_session(token_hash: str) -> bool:
     updated = cur.rowcount > 0
     conn.close()
     return updated
+
+
+# ---------- Plans (one per student) ----------
+
+def save_plan(user_id: str, fingerprint: str, generated_at: str, plan_json: str) -> None:
+    """Store the student's latest plan, replacing any earlier one."""
+    conn = get_connection()
+    conn.execute(
+        """INSERT INTO plans (user_id, fingerprint, generated_at, plan_json) VALUES (?, ?, ?, ?)
+           ON CONFLICT(user_id) DO UPDATE SET fingerprint = excluded.fingerprint,
+               generated_at = excluded.generated_at, plan_json = excluded.plan_json""",
+        (user_id, fingerprint, generated_at, plan_json),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_plan(user_id: str) -> Optional[StoredPlan]:
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT user_id, fingerprint, generated_at, plan_json FROM plans WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    conn.close()
+    return StoredPlan(user_id=row[0], fingerprint=row[1], generated_at=row[2], plan_json=row[3]) if row else None
 
 
 # ---------- Classes ----------
