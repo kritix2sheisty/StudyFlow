@@ -14,7 +14,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from api import assignments, auth, focus, plan, study_time
+from api import account, assignments, auth, focus, plan, study_time
 from api.auth import ApiError
 
 
@@ -37,6 +37,8 @@ def create_api() -> Starlette:
         Route("/api/auth/login", auth.login, methods=["POST"]),
         Route("/api/auth/logout", auth.logout, methods=["POST"]),
         Route("/api/me", auth.me, methods=["GET"]),
+        Route("/api/account/local-data", account.local_data, methods=["GET"]),
+        Route("/api/account/import-local", account.import_local, methods=["POST"]),
         Route("/api/assignments", assignments.list_assignments, methods=["GET"]),
         Route("/api/assignments", assignments.create_assignment, methods=["POST"]),
         Route("/api/assignments/{assignment_id}", assignments.update_assignment, methods=["PUT"]),

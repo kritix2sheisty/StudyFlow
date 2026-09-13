@@ -35,22 +35,13 @@ from datetime import date, datetime
 
 import reflex as rx
 
-from storage import (
-    DEFAULT_USER_ID,
-    add_assignment,
-    add_time_slot,
-    delete_assignment,
-    delete_time_slot,
-    init_db,
-    list_assignments,
-    list_time_slots,
-    mark_assignment_complete,
-    update_assignment,
-)
+from storage import init_db
 from api import create_api
 from schedule_builder import DEFAULT_BREAK_MINUTES
+from models import Assignment, Priority, TimeSlot, Weekday
 from StudyFlow import assignments as forms
 from StudyFlow import focus
+from StudyFlow.api_client import ApiClient, ApiError
 from StudyFlow import plan_view
 from StudyFlow import study_time
 from StudyFlow.focus import Session
@@ -100,38 +91,136 @@ TAP_WIDTH = rx.breakpoints(initial="100%", sm="auto")
 
 class DashboardState(rx.State):
     """
-    What the dashboard shows. Today the values are the sample data;
-    connecting the engine means replacing how these are loaded, not
-    how the page renders them.
+    What the pages show, and how they get it: every value here comes
+    from the StudyFlow HTTP API, called with the student's session
+    token like any other client would. Nothing in this class touches
+    storage or the scheduling engine; ownership, validation, freshness
+    and scheduling are the API's, so the future mobile app and this
+    web app share one truth.
     """
 
-    # Assignments come from the database (storage.py) and are loaded
-    # when the page opens; see load_assignments.
-    # Whose data this is. Until accounts exist every browser session is
-    # the built-in student; the API layer will set this from a login.
-    user_id: str = DEFAULT_USER_ID
+    # ---- Account. The token stays on the server (a backend var is
+    # never sent to the browser); the frontend never supplies a user id.
+    _auth_token: str = ""
+    authenticated: bool = False
+    user_email: str = ""
+    auth_email: str = ""
+    auth_password: str = ""
+    auth_confirm: str = ""
+    auth_error: str = ""
+
+    def _client(self) -> ApiClient:
+        """The API as this student, telling it which browser is acting."""
+        try:
+            browser_ip = self.router.session.client_ip or ""
+        except Exception:
+            browser_ip = ""
+        return ApiClient(self._auth_token, browser_ip)
+
+    def set_auth_email(self, value: str):
+        self.auth_email = value
+
+    def set_auth_password(self, value: str):
+        self.auth_password = value
+
+    def set_auth_confirm(self, value: str):
+        self.auth_confirm = value
+
+    def _clear_auth_form(self):
+        self.auth_password = ""
+        self.auth_confirm = ""
+        self.auth_error = ""
+
+    async def _sign_in(self, email: str, password: str):
+        result = await ApiClient(browser_ip=self._client().browser_ip).login(email, password)
+        self._auth_token = result["token"]
+        self.authenticated = True
+        self.user_email = email.strip().lower()
+        self.auth_email = ""
+        self._clear_auth_form()
+
+    async def login(self):
+        """Sign in with the API; on success the dashboard loads as this student."""
+        email, password = self.auth_email.strip(), self.auth_password
+        if not email or not password:
+            self.auth_error = "Enter your email and password."
+            return
+        try:
+            await self._sign_in(email, password)
+        except ApiError as e:
+            self.auth_error = e.message
+            return
+        return rx.redirect("/")
+
+    async def register(self):
+        """Create the account with the API, then sign in with it."""
+        email, password = self.auth_email.strip(), self.auth_password
+        if not email or not password:
+            self.auth_error = "Enter an email and choose a password."
+            return
+        if password != self.auth_confirm:
+            self.auth_error = "The two passwords do not match."
+            return
+        try:
+            await ApiClient(browser_ip=self._client().browser_ip).register(email, password)
+            await self._sign_in(email, password)
+        except ApiError as e:
+            self.auth_error = e.message
+            return
+        return rx.redirect("/")
+
+    async def logout(self):
+        """Revoke the session with the API and forget everything on this side."""
+        if self._auth_token:
+            try:
+                await self._client().logout()
+            except ApiError:
+                pass
+        self.reset()
+        return rx.redirect("/login")
+
+    async def redirect_if_logged_in(self):
+        """The login and register pages send a signed-in student to the dashboard."""
+        if self.authenticated:
+            return rx.redirect("/")
+
+    async def _signed_out(self):
+        """A rejected token means the session ended elsewhere: start over."""
+        self.reset()
+        return rx.redirect("/login")
+
+    # ---- Importing the data StudyFlow kept before accounts existed
+    import_available: bool = False
+    import_summary: str = ""
+
+    async def import_local(self):
+        try:
+            moved = await self._client().import_local_data()
+        except ApiError as e:
+            return rx.toast.error(e.message)
+        await self._load_all()
+        if not moved.get("imported"):
+            return rx.toast.info("There was nothing left to import.")
+        return rx.toast.success(f"Imported {moved['assignments']} assignments and {moved['time_slots']} study times.")
+
+    # ---- Assignments (rows for the cards; see StudyFlow/assignments.py)
     assignments: list[dict[str, str]] = []
 
-    # The generated plan, flattened by StudyFlow/plan_view.py. It lives
-    # in State until the student generates again or reloads; nothing
-    # about it is stored in the database yet.
+    # ---- The generated plan, as the API serves it and plan_view shapes it.
     has_plan: bool = False
     plan_message: str = ""                      # why there is no plan, or what went wrong
     plan_stale: bool = False                    # a plan existed, then its inputs changed
-    plan_fingerprint: str = ""                  # plan_view.plan_input_fingerprint() of the data the plan was built from
 
     def _invalidate_plan(self, what: str):
         """
         The scheduling inputs changed, so the generated plan no longer
         describes them. Clear every generated value and say why; the
         student regenerates explicitly, so their schedule never changes
-        under them. Callers invoke this only after storage reports a
-        real change (a saved row, a completed row, a deleted row); a
-        failed or no-op operation leaves the plan alone.
+        under them. Callers invoke this only after the API reports a
+        real change; a failed or no-op operation leaves the plan alone.
         """
         had_plan = self.has_plan
         self.has_plan = False
-        self.plan_fingerprint = ""
         self.plan_days = []
         self.today_plan = []
         self.today_sessions = []
@@ -165,51 +254,101 @@ class DashboardState(rx.State):
     def completed_count(self) -> str:
         return str(len(self.completed_names))
 
-    def load_assignments(self):
-        """Read the assignments from the database: active ones soonest due first, completed ones by name."""
-        stored = list_assignments(self.user_id, include_completed=True)
+    # ---- Loading, all through the API
+
+    @staticmethod
+    def _assignment_from_json(row: dict) -> Assignment:
+        return Assignment(id=row["id"], name=row["name"], subject=row["subject"],
+                          due_date=date.fromisoformat(row["due_date"]), estimated_hours=row["estimated_hours"],
+                          priority=Priority[row["priority"]], completed=row["completed"])
+
+    async def _load_assignments(self):
+        rows = await self._client().assignments("all")
+        stored = [self._assignment_from_json(r) for r in rows]
         self.assignments = forms.rows_from([a for a in stored if not a.completed], date.today())
         self.completed_names = [a.name for a in stored if a.completed]
 
+    async def _load_slots(self):
+        rows = await self._client().slots()
+        stored = [TimeSlot(id=r["id"], weekday=Weekday[r["weekday"]], start_hour=r["start_hour"], end_hour=r["end_hour"])
+                  for r in rows]
+        self.slots = study_time.rows_from(stored)
+        self.slot_hours = f"{study_time.total_hours(stored):g}"
+
+    def _apply_plan(self, plan: dict):
+        """A fresh plan from the API becomes the page's rows, totals and badges."""
+        today = date.today().isoformat()
+        subject_of = {a["name"]: a["subject"] for a in plan["assignments"]}
+        self.plan_days = [
+            Day(label=d["label"], iso=d["date"],
+                blocks=[Block(time=b["time"], label=b["label"], is_break="yes" if b["is_break"] else "no")
+                        for b in d["blocks"]])
+            for d in plan["days"]
+        ]
+        todays = next((d for d in plan["days"] if d["date"] == today), None)
+        self.today_plan = [{"time": b["time"], "label": b["label"], "is_break": "yes" if b["is_break"] else "no"}
+                           for b in (todays["blocks"] if todays else [])]
+        self.today_sessions = [
+            Session(label=b["label"], subject=subject_of.get(b["label"], ""), time=b["time"],
+                    start_minute=_minute(b["start"]), end_minute=_minute(b["end"]))
+            for b in (todays["blocks"] if todays else []) if not b["is_break"]
+        ]
+        self.plan_statuses = [
+            StatusRow(id=str(a["id"]), name=a["name"], subject=a["subject"], status=a["status"],
+                      scheduled=f"{a['scheduled_hours']:.1f}", required=f"{a['required_hours']:.1f}",
+                      remaining=f"{a['remaining_hours']:.1f}", percent=int(a["percent"]), risk=a["risk"],
+                      due=a["due_date"])
+            for a in plan["assignments"]
+        ]
+        self.plan_required = f"{plan['required_hours']:.1f}"
+        self.plan_scheduled = f"{plan['scheduled_hours']:.1f}"
+        self.plan_unscheduled = f"{plan['unscheduled_hours']:.1f}"
+        self.plan_completion = f"{plan['completion_percentage']:.0f}"
+        self.has_plan = True
+        self.plan_stale = False
+        self.plan_message = ""
+        risk = plan_view.risk_by_name(self.plan_statuses)
+        self.assignments = [{**row, "risk": risk.get(row["name"], row["risk"])} for row in self.assignments]
+
+    async def _load_plan(self):
+        """
+        The API decides freshness (the same fingerprint rule as before,
+        now server-side): a fresh plan is shown, a stale one is cleared
+        with the usual message, none at all leaves the empty state.
+        """
+        answer = await self._client().plan()
+        if answer["fresh"]:
+            self._apply_plan(answer["plan"])
+        elif self.has_plan:
+            self._invalidate_plan("assignments or study times")
+
+    async def _load_all(self):
+        await self._load_assignments()
+        await self._load_slots()
+        await self._load_plan()
+        local = await self._client().local_data()
+        self.import_available = bool(local.get("available"))
+        self.import_summary = f"{local.get('assignments', 0)} assignments and {local.get('time_slots', 0)} study times"
+
+    async def load_data(self):
+        """Everything a page needs, on page load. Not signed in: go to the login page."""
+        if not self.authenticated:
+            return rx.redirect("/login")
+        try:
+            await self._load_all()
+        except ApiError as e:
+            if e.status == 401:
+                return await self._signed_out()
+            return rx.toast.error(e.message)
+
     # ---- Study time: the student's recurring weekly availability ----
     #
-    # Rows come from storage.list_time_slots(); the form's labels
-    # ("4:00 PM") are translated to the model's 24-hour integers by
+    # Rows are the API's slots; the form's labels ("4:00 PM") are
+    # translated to the model's 24-hour integers by
     # StudyFlow/study_time.py, which is unit-tested on its own.
 
     slots: list[dict[str, str]] = []
     slot_hours: str = "0"
-
-    def load_slots(self):
-        stored = list_time_slots(self.user_id)
-        self.slots = study_time.rows_from(stored)
-        self.slot_hours = f"{study_time.total_hours(stored):g}"
-
-    def load_data(self):
-        """
-        Everything a page needs from the database; runs on page load.
-
-        Then the freshness check (v1.2): a plan is shown only if the
-        database still holds exactly the data it was built from. The
-        mutation handlers invalidate explicitly; this is the safety net
-        for everything they cannot see, such as edits from another tab
-        or the CLI, or a state that came back older than the data.
-        """
-        self.load_assignments()
-        self.load_slots()
-        if not self.has_plan:
-            return
-        current = plan_view.plan_input_fingerprint(
-            list_assignments(self.user_id, include_completed=False), list_time_slots(self.user_id))
-        if current != self.plan_fingerprint:
-            self._invalidate_plan("assignments or study times")
-            return
-        # Same data: the plan stands, so the cards get its risk back
-        # (load_assignments() had reset them to NOT RATED).
-        risk = plan_view.risk_by_name(self.plan_statuses)
-        self.assignments = [
-            {**row, "risk": risk.get(row["name"], row["risk"])} for row in self.assignments
-        ]
 
     slot_form_open: bool = False
     slot_weekday: str = "Monday"
@@ -246,19 +385,23 @@ class DashboardState(rx.State):
         else:
             self.close_slot_form()
 
-    def submit_slot_form(self):
-        """Validate, build the model's TimeSlot, save it, reload, close."""
+    async def submit_slot_form(self):
+        """Validate, send the slot to the API, reload, close."""
         self.slot_errors = study_time.validate_form(self.slot_weekday, self.slot_start, self.slot_end)
         self.slot_save_error = ""
         if not study_time.is_valid(self.slot_errors):
             return
         slot = study_time.to_time_slot(self.slot_weekday, self.slot_start, self.slot_end)
         try:
-            add_time_slot(self.user_id, slot)
+            await self._client().add_slot({"weekday": slot.weekday.name, "start_hour": slot.start_hour,
+                                           "end_hour": slot.end_hour})
+        except ApiError as e:
+            self.slot_save_error = e.message if e.status == 400 else "StudyFlow could not save that study time. Please try again."
+            return
         except Exception:
             self.slot_save_error = "StudyFlow could not save that study time. Please try again."
             return
-        self.load_slots()
+        await self._load_slots()
         self._invalidate_plan("study times")
         label = f"{self.slot_weekday} {self.slot_start} – {self.slot_end}"
         self.close_slot_form()
@@ -282,13 +425,17 @@ class DashboardState(rx.State):
         if not is_open:
             self.cancel_delete_slot()
 
-    def confirm_delete_slot(self):
-        label = self.slot_delete_label
-        deleted = delete_time_slot(self.user_id, int(self.slot_delete_id))
+    async def confirm_delete_slot(self):
+        label, slot_id = self.slot_delete_label, self.slot_delete_id
         self.cancel_delete_slot()
-        self.load_slots()
-        if not deleted:
-            return rx.toast.info(f"{label} was already gone.")
+        try:
+            await self._client().delete_slot(int(slot_id))
+        except ApiError as e:
+            await self._load_slots()
+            if e.status == 404:
+                return rx.toast.info(f"{label} was already gone.")
+            return rx.toast.error(e.message)
+        await self._load_slots()
         self._invalidate_plan("study times")
         return rx.toast.success(f"Removed {label}.")
 
@@ -309,56 +456,26 @@ class DashboardState(rx.State):
     def progress_value(self) -> int:
         return int(self.plan_completion)
 
-    def generate_study_plan(self):
+    async def generate_study_plan(self):
         """
-        The whole pipeline, through the existing engine:
-
-            list_assignments() + list_time_slots()
-                -> study_plan.generate_study_plan()
-                -> plan_view (strings and lists for the page)
-
-        With no assignments or no study time there is nothing to plan,
-        so a message explains what to add. If the engine raises, the
-        dashboard stays usable and shows a plain message.
+        Ask the API for a plan. The engine runs there and nowhere else;
+        the answer is the same shape the dashboard already renders.
+        With nothing to plan the API explains what to add; any other
+        failure leaves the dashboard usable with a plain message.
         """
-        assignments = list_assignments(self.user_id, include_completed=False)
-        slots = list_time_slots(self.user_id)
-        self.plan_message = plan_view.guard_message(assignments, slots)
-        if self.plan_message:
-            self.has_plan = False
-            return rx.toast.warning(self.plan_message)
-
-        today = date.today()
         try:
-            plan = generate_study_plan(assignments, slots, today=today)
-            statuses = plan_view.status_rows(plan, slots, today)
-            days = plan_view.days_of(plan)
+            plan = await self._client().generate_plan()
+        except ApiError as e:
+            self.has_plan = False
+            self.plan_message = e.message if e.status == 400 else \
+                "StudyFlow could not build a plan from that data. Please try again."
+            return rx.toast.warning(self.plan_message) if e.status == 400 else rx.toast.error(self.plan_message)
         except Exception:
             self.has_plan = False
             self.plan_message = "StudyFlow could not build a plan from that data. Please try again."
             return rx.toast.error(self.plan_message)
-
-        self.plan_days = days
-        self.today_plan = plan_view.today_blocks(plan, today)
-        self.today_sessions = focus.sessions_for_today(plan, assignments, today)
-        self.plan_statuses = statuses
-        numbers = plan_view.totals(plan)
-        self.plan_required = numbers["required"]
-        self.plan_scheduled = numbers["scheduled"]
-        self.plan_unscheduled = numbers["unscheduled"]
-        self.plan_completion = numbers["completion"]
-        self.has_plan = True
-        self.plan_stale = False
-        self.plan_message = ""
-        self.plan_fingerprint = plan_view.plan_input_fingerprint(assignments, slots)
-
-        # Stamp the real risk onto the assignment cards.
-        risk = plan_view.risk_by_name(statuses)
-        self.assignments = [
-            {**row, "risk": risk.get(row["name"], row["risk"])} for row in self.assignments
-        ]
-
-        if plan_view.has_unscheduled(plan):
+        self._apply_plan(plan)
+        if plan["unscheduled_hours"] > 0:
             return rx.toast.warning(f"Plan ready. {self.plan_unscheduled}h could not fit before its due date.")
         return rx.toast.success("Plan ready. Every assignment fits.")
 
@@ -367,7 +484,7 @@ class DashboardState(rx.State):
     # The form's values live here so the page can bind to them, and so
     # Cancel can clear them. Validation and row building are delegated
     # to StudyFlow/assignments.py, which has no Reflex in it and is
-    # unit-tested on its own.
+    # unit-tested on its own; the API validates again on its side.
 
     form_open: bool = False
     form_name: str = ""
@@ -428,37 +545,40 @@ class DashboardState(rx.State):
         else:
             self.close_form()
 
-    # Set when saving to the database fails; shown at the top of the form.
+    # Set when saving fails; shown at the top of the form.
     form_save_error: str = ""
 
     # The same dialog edits an existing assignment. When editing_id is
-    # set, submit calls update_assignment() instead of add_assignment().
+    # set, submit updates instead of creating.
     editing_id: str = ""
 
     @rx.var
     def is_editing(self) -> bool:
         return self.editing_id != ""
 
-    def open_edit(self, assignment_id: str):
-        """Load the stored assignment into the form and open it in edit mode."""
-        stored = next((a for a in list_assignments(self.user_id) if str(a.id) == assignment_id), None)
+    async def open_edit(self, assignment_id: str):
+        """Load the stored assignment from the API into the form and open it in edit mode."""
+        try:
+            rows = await self._client().assignments("all")
+        except ApiError as e:
+            return rx.toast.error(e.message)
+        stored = next((r for r in rows if str(r["id"]) == assignment_id), None)
         if stored is None:
             return rx.toast.error("That assignment no longer exists.")
         self.open_form()
         self.editing_id = assignment_id
-        self.form_name = stored.name
-        self.form_subject = stored.subject
-        self.form_due = stored.due_date.isoformat()
+        self.form_name = stored["name"]
+        self.form_subject = stored["subject"]
+        self.form_due = stored["due_date"]
         self.form_notice = forms.due_notice(self.form_due, date.today())
-        self.form_hours = f"{stored.estimated_hours:g}"
-        self.form_priority = stored.priority.name
+        self.form_hours = f"{stored['estimated_hours']:g}"
+        self.form_priority = stored["priority"]
 
-    def submit_form(self):
+    async def submit_form(self):
         """
-        Validate, build a real Assignment, save it through storage.py
-        (add or update), reload the list from the database, and close.
-        If saving fails, keep the form open with a plain message
-        instead of a traceback.
+        Validate, send the assignment to the API (create or update),
+        reload the list, and close. If saving fails, keep the form open
+        with a plain message instead of a traceback.
         """
         values = (self.form_name, self.form_subject, self.form_due, self.form_hours, self.form_priority)
         self.form_errors = forms.validate_form(*values)
@@ -467,38 +587,48 @@ class DashboardState(rx.State):
             return
         assignment = forms.to_assignment(*values)
         overdue = " (overdue)" if assignment.due_date < date.today() else ""
+        payload = {"name": assignment.name, "subject": assignment.subject, "due_date": assignment.due_date.isoformat(),
+                   "estimated_hours": assignment.estimated_hours, "priority": assignment.priority.name}
         try:
             if self.is_editing:
-                assignment.id = int(self.editing_id)
-                if not update_assignment(self.user_id, assignment):
-                    # No row changed, so nothing the plan depends on did:
-                    # the plan stays, the list refreshes, the form stays open.
-                    self.load_assignments()
-                    self.form_save_error = "That assignment no longer exists. Close the form and add it again."
-                    return
+                await self._client().update_assignment(int(self.editing_id), payload)
                 message = f"Saved changes to {assignment.name}{overdue}."
             else:
-                add_assignment(self.user_id, assignment)
+                await self._client().create_assignment(payload)
                 message = f"Added {assignment.name}{overdue}."
+        except ApiError as e:
+            if e.status == 404:
+                # Nothing changed, so nothing the plan depends on did:
+                # the plan stays, the list refreshes, the form stays open.
+                await self._load_assignments()
+                self.form_save_error = "That assignment no longer exists. Close the form and add it again."
+            else:
+                self.form_save_error = e.message if e.status == 400 else \
+                    "StudyFlow could not save that assignment. Please try again."
+            return
         except Exception:
             self.form_save_error = "StudyFlow could not save that assignment. Please try again."
             return
-        self.load_assignments()
+        await self._load_assignments()
         self._invalidate_plan("assignments")
         self.close_form()
         return rx.toast.success(message)
 
     # ---- Complete and delete ----
 
-    def complete_assignment(self, assignment_id: str):
+    async def complete_assignment(self, assignment_id: str):
         """
-        Mark it done; it leaves the active list but stays in the
-        database. The plan is invalidated only if a row really changed.
+        Mark it done; it leaves the active list but stays stored. The
+        plan is invalidated only if the API really changed a row.
         """
-        updated = mark_assignment_complete(self.user_id, int(assignment_id), True)
-        self.load_assignments()
-        if not updated:
-            return rx.toast.info("That assignment was already gone.")
+        try:
+            await self._client().complete_assignment(int(assignment_id))
+        except ApiError as e:
+            await self._load_assignments()
+            if e.status == 404:
+                return rx.toast.info("That assignment was already gone.")
+            return rx.toast.error(e.message)
+        await self._load_assignments()
         self._invalidate_plan("assignments")
         return rx.toast.success("Marked complete. Nice work.")
 
@@ -522,15 +652,25 @@ class DashboardState(rx.State):
         if not is_open:
             self.cancel_delete()
 
-    def confirm_delete(self):
-        name = self.delete_name
-        deleted = delete_assignment(self.user_id, int(self.delete_id))
+    async def confirm_delete(self):
+        name, assignment_id = self.delete_name, self.delete_id
         self.cancel_delete()
-        self.load_assignments()
-        if not deleted:
-            return rx.toast.info(f"{name} was already gone.")
+        try:
+            await self._client().delete_assignment(int(assignment_id))
+        except ApiError as e:
+            await self._load_assignments()
+            if e.status == 404:
+                return rx.toast.info(f"{name} was already gone.")
+            return rx.toast.error(e.message)
+        await self._load_assignments()
         self._invalidate_plan("assignments")
         return rx.toast.success(f"Deleted {name}.")
+
+
+def _minute(clock: str) -> int:
+    """'16:30' -> 990."""
+    hours, minutes = clock.split(":")
+    return int(hours) * 60 + int(minutes)
 
 
 # ---------------------------------------------------------------------
@@ -604,11 +744,38 @@ def header(active: str = "Dashboard") -> rx.Component:
                 spacing="2", wrap="wrap", align="center",
                 padding="1", border_radius="999px", background=rx.color("gray", 2),
             ),
+            rx.cond(
+                DashboardState.authenticated,
+                rx.hstack(
+                    rx.text(DashboardState.user_email, size="1", color_scheme="gray"),
+                    rx.button("Log out", on_click=DashboardState.logout, size="1", variant="ghost", color_scheme="gray"),
+                    spacing="2", align="center",
+                ),
+                rx.link("Log in", href="/login", size="2", weight="medium"),
+            ),
             rx.color_mode.button(size="2", variant="ghost"),
             spacing="3", align="center",
         ),
         width="100%", align="center", wrap="wrap", spacing="4", padding_y="4",
         border_bottom=f"1px solid {rx.color('gray', 4)}",
+    )
+
+
+def import_banner() -> rx.Component:
+    """Offered once, on a single-machine installation that still holds pre-account data."""
+    s = DashboardState
+    return rx.cond(
+        s.import_available,
+        rx.callout(
+            rx.hstack(
+                rx.text("StudyFlow found study data from before accounts existed: ", s.import_summary,
+                        ". Import it into this account?", size="2"),
+                rx.button("Import existing StudyFlow data", on_click=s.import_local, size="2"),
+                spacing="3", align="center", wrap="wrap",
+            ),
+            icon="database", color_scheme="indigo", width="100%",
+        ),
+        rx.box(),
     )
 
 
@@ -647,6 +814,10 @@ class FocusState(rx.State):
     remaining_seconds: int = 0
     completed_minutes: int = 0
     break_minutes: int = DEFAULT_BREAK_MINUTES
+    session_date: str = ""                     # the block's identity, for recording a completion
+    session_start: str = ""
+    session_end: str = ""
+    marked_message: str = ""
     _deadline: float = 0.0
     _timer_token: int = 0
     _finished: str = ""            # the session moved past by "Next session"
@@ -681,6 +852,9 @@ class FocusState(rx.State):
         self.mode = "ready"
         self.label, self.subject, self.time_label = current.label, current.subject, current.time
         self.session_minutes = current.minutes
+        self.session_date = date.today().isoformat()
+        self.session_start = f"{current.start_minute // 60:02d}:{current.start_minute % 60:02d}"
+        self.session_end = f"{current.end_minute // 60:02d}:{current.end_minute % 60:02d}"
         self.total_seconds = self.remaining_seconds = current.minutes * 60
 
     async def load_focus(self):
@@ -755,14 +929,23 @@ class FocusState(rx.State):
         self._timer_token += 1
 
     async def mark_complete(self):
-        """Mark the assignment complete through the dashboard's own handler."""
+        """
+        Record this study block as completed through the API. The
+        assignment itself is not marked complete and the plan stays
+        fresh; progress counts the hours done.
+        """
         dash = await self.get_state(DashboardState)
-        row = next((r for r in dash.assignments if r["name"] == self.label), None)
+        try:
+            result = await dash._client().focus_complete(
+                {"date": self.session_date, "start": self.session_start, "end": self.session_end})
+        except ApiError as e:
+            return rx.toast.error(e.message)
         self.mode = "marked"
         self._timer_token += 1
-        if row is None:
-            return rx.toast.info("That assignment is no longer in your list.")
-        return DashboardState.complete_assignment(row["id"])
+        done = result["assignment"]
+        self.marked_message = (f"{done['done_hours']:g} of {done['required_hours']:g} hours of "
+                               f"{done['name']} done.")
+        return rx.toast.success("Session recorded. Nice work.")
 
     @rx.event(background=True)
     async def run_timer(self):
@@ -1067,7 +1250,7 @@ def progress_section() -> rx.Component:
 # 8. Add Assignment form
 # ---------------------------------------------------------------------
 
-def form_field(label: str, control: rx.Component, error: rx.Var,
+def form_field(label: str, control: rx.Component, error,
                notice: rx.Var | None = None) -> rx.Component:
     """
     A labelled input with its validation message underneath. An
@@ -1077,8 +1260,12 @@ def form_field(label: str, control: rx.Component, error: rx.Var,
     children = [
         rx.text(label, size="2", weight="medium"),
         control,
-        rx.cond(error != "", rx.text(error, size="1", color=rx.color("red", 11))),
     ]
+    if isinstance(error, str):
+        if error:
+            children.append(rx.text(error, size="1", color=rx.color("red", 11)))
+    else:
+        children.append(rx.cond(error != "", rx.text(error, size="1", color=rx.color("red", 11))))
     if notice is not None:
         children.append(rx.cond(notice != "", rx.text(notice, size="1", color=rx.color("amber", 11))))
     return rx.vstack(*children, spacing="1", align="start", width="100%")
@@ -1671,6 +1858,7 @@ def index() -> rx.Component:
             rx.vstack(
                 header(),
                 welcome(),
+                import_banner(),
                 overview_cards(),
                 call_to_action(),
                 upcoming_assignments(),
@@ -1832,10 +2020,15 @@ def focus_page() -> rx.Component:
     )
 
     marked = rx.vstack(
-        eyebrow("Marked complete"),
+        eyebrow("Session recorded"),
         rx.heading("Nice work.", size="6", text_align="center"),
-        rx.text("Your plan needs regenerating before the next session.", size="2", color_scheme="gray"),
-        rx.link(rx.button("Go to the dashboard", size="3"), href="/"),
+        rx.text(f.marked_message, size="2", color_scheme="gray"),
+        rx.hstack(
+            rx.button("Next session", on_click=f.next_session, size="3"),
+            rx.link(rx.button("Go to the dashboard", size="3", variant="soft"), href="/"),
+            spacing="3",
+        ),
+        up_next(),
         spacing="3", align="center", width="100%",
     )
 
@@ -1861,7 +2054,80 @@ def focus_page() -> rx.Component:
         width="100%", min_height="100vh",
     )
 
+
+# ---------------------------------------------------------------------
+# Account pages (v1.2)
+# ---------------------------------------------------------------------
+
+def auth_shell(title: str, subtitle: str, body: rx.Component) -> rx.Component:
+    return rx.box(
+        rx.container(
+            rx.vstack(
+                header(active=""),
+                rx.center(
+                    rx.vstack(
+                        rx.vstack(
+                            rx.heading(title, size="7"),
+                            rx.text(subtitle, size="2", color_scheme="gray"),
+                            spacing="1", align="start",
+                        ),
+                        body,
+                        spacing="5", align="start", width="100%", max_width="24rem",
+                    ),
+                    width="100%", padding_y="9",
+                ),
+                spacing=SECTION_GAP, width="100%", padding_bottom="9",
+            ),
+            size="4", padding_x=PAGE_PADDING_X,
+        ),
+        width="100%", min_height="100vh",
+    )
+
+
+def auth_error() -> rx.Component:
+    s = DashboardState
+    return rx.cond(s.auth_error != "", rx.text(s.auth_error, size="1", color=rx.color("red", 11)), rx.box())
+
+
+def login_page() -> rx.Component:
+    s = DashboardState
+    return auth_shell(
+        "Sign in", "Your assignments, study time and plan are yours alone.",
+        rx.vstack(
+            form_field("Email", rx.input(value=s.auth_email, on_change=s.set_auth_email, type="email",
+                                         placeholder="you@school.edu", width="100%"), ""),
+            form_field("Password", rx.input(value=s.auth_password, on_change=s.set_auth_password, type="password",
+                                            width="100%"), ""),
+            auth_error(),
+            rx.button("Sign in", on_click=s.login, size="3", width="100%"),
+            rx.text("New to StudyFlow? ", rx.link("Create an account", href="/register"), size="2", color_scheme="gray"),
+            spacing="3", align="start", width="100%",
+        ),
+    )
+
+
+def register_page() -> rx.Component:
+    s = DashboardState
+    return auth_shell(
+        "Create your account", "An email and a password of at least 8 characters. Nothing else is asked.",
+        rx.vstack(
+            form_field("Email", rx.input(value=s.auth_email, on_change=s.set_auth_email, type="email",
+                                         placeholder="you@school.edu", width="100%"), ""),
+            form_field("Password", rx.input(value=s.auth_password, on_change=s.set_auth_password, type="password",
+                                            width="100%"), ""),
+            form_field("Password again", rx.input(value=s.auth_confirm, on_change=s.set_auth_confirm, type="password",
+                                                  width="100%"), ""),
+            auth_error(),
+            rx.button("Create account", on_click=s.register, size="3", width="100%"),
+            rx.text("Already have one? ", rx.link("Sign in", href="/login"), size="2", color_scheme="gray"),
+            spacing="3", align="start", width="100%",
+        ),
+    )
+
 app.add_page(index, title="StudyFlow", on_load=DashboardState.load_data)
+app.add_page(login_page, route="/login", title="Sign in · StudyFlow", on_load=DashboardState.redirect_if_logged_in)
+app.add_page(register_page, route="/register", title="Create account · StudyFlow",
+             on_load=DashboardState.redirect_if_logged_in)
 app.add_page(assignments_page, route="/assignments", title="Assignments · StudyFlow",
              on_load=DashboardState.load_data)
 app.add_page(schedule_page, route="/schedule", title="Schedule · StudyFlow",

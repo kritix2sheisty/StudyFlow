@@ -340,6 +340,47 @@ def get_plan(user_id: str) -> Optional[StoredPlan]:
     return StoredPlan(user_id=row[0], fingerprint=row[1], generated_at=row[2], plan_json=row[3]) if row else None
 
 
+# ---------- The pre-account data of the built-in student ----------
+
+_OWNED_TABLES = ("assignments", "time_slots", "plans", "session_completions")
+
+
+def local_data_summary() -> dict:
+    """How much the built-in student still holds, per table."""
+    conn = get_connection()
+    summary = {
+        table: conn.execute(f"SELECT COUNT(*) FROM {table} WHERE user_id = ?", (DEFAULT_USER_ID,)).fetchone()[0]
+        for table in _OWNED_TABLES
+    }
+    conn.close()
+    return summary
+
+
+def claim_local_data(user_id: str) -> dict:
+    """
+    Give everything the built-in student holds to `user_id`, once.
+    Returns how many rows moved per table. A plan is moved only if the
+    claimant has none of their own; sessions of the claimant are kept.
+    """
+    if user_id == DEFAULT_USER_ID:
+        return {table: 0 for table in _OWNED_TABLES}
+    conn = get_connection()
+    moved = {}
+    for table in ("assignments", "time_slots", "session_completions"):
+        cur = conn.execute(f"UPDATE {table} SET user_id = ? WHERE user_id = ?", (user_id, DEFAULT_USER_ID))
+        moved[table] = cur.rowcount
+    has_plan = conn.execute("SELECT 1 FROM plans WHERE user_id = ?", (user_id,)).fetchone() is not None
+    if has_plan:
+        cur = conn.execute("DELETE FROM plans WHERE user_id = ?", (DEFAULT_USER_ID,))
+        moved["plans"] = 0
+    else:
+        cur = conn.execute("UPDATE plans SET user_id = ? WHERE user_id = ?", (user_id, DEFAULT_USER_ID))
+        moved["plans"] = cur.rowcount
+    conn.commit()
+    conn.close()
+    return moved
+
+
 # ---------- Session completions (a study block the student finished) ----------
 
 def add_session_completion(user_id: str, assignment_id: int, day: str, start_minute: int, end_minute: int) -> bool:
