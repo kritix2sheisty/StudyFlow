@@ -65,6 +65,23 @@ class Session:
 
 
 @dataclass
+class SessionCompletion:
+    """A study block the student finished. It changes nothing else: not
+    the assignment, not the plan. Progress counts these as hours done."""
+    id: int
+    user_id: str
+    assignment_id: int
+    date: str            # ISO date of the block
+    start_minute: int
+    end_minute: int
+    completed_at: str
+
+    @property
+    def minutes(self) -> int:
+        return self.end_minute - self.start_minute
+
+
+@dataclass
 class StoredPlan:
     """
     A student's last generated plan, as the JSON the API served, with
@@ -119,6 +136,19 @@ def init_db() -> None:
             fingerprint TEXT NOT NULL,
             generated_at TEXT NOT NULL,
             plan_json TEXT NOT NULL
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS session_completions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL REFERENCES users(id),
+            assignment_id INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            start_minute INTEGER NOT NULL,
+            end_minute INTEGER NOT NULL,
+            completed_at TEXT NOT NULL,
+            UNIQUE (user_id, date, start_minute, end_minute)
         )
     """)
 
@@ -308,6 +338,46 @@ def get_plan(user_id: str) -> Optional[StoredPlan]:
     ).fetchone()
     conn.close()
     return StoredPlan(user_id=row[0], fingerprint=row[1], generated_at=row[2], plan_json=row[3]) if row else None
+
+
+# ---------- Session completions (a study block the student finished) ----------
+
+def add_session_completion(user_id: str, assignment_id: int, day: str, start_minute: int, end_minute: int) -> bool:
+    """Record a finished block. Returns False if that block was already recorded."""
+    conn = get_connection()
+    cur = conn.execute(
+        """INSERT OR IGNORE INTO session_completions
+           (user_id, assignment_id, date, start_minute, end_minute, completed_at)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (user_id, assignment_id, day, start_minute, end_minute, datetime.now().isoformat(timespec="seconds")),
+    )
+    conn.commit()
+    added = cur.rowcount > 0
+    conn.close()
+    return added
+
+
+def list_session_completions(user_id: str) -> List[SessionCompletion]:
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT id, user_id, assignment_id, date, start_minute, end_minute, completed_at
+           FROM session_completions WHERE user_id = ? ORDER BY date, start_minute""",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+    return [SessionCompletion(*r) for r in rows]
+
+
+def done_minutes_by_assignment(user_id: str) -> dict:
+    """assignment id -> minutes of completed sessions, for progress."""
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT assignment_id, SUM(end_minute - start_minute)
+           FROM session_completions WHERE user_id = ? GROUP BY assignment_id""",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+    return {r[0]: r[1] for r in rows}
 
 
 # ---------- Classes ----------

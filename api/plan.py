@@ -70,15 +70,25 @@ def _inputs(user_id: str):
     return storage.list_assignments(user_id, include_completed=False), storage.list_time_slots(user_id)
 
 
-def _fresh_plan(user_id: str) -> dict | None:
-    """The stored plan if the student's data still matches what it was built from."""
+def plan_state(user_id: str) -> tuple[str, dict | None]:
+    """
+    ("none", None) before any plan exists, ("stale", None) when the
+    student's data no longer matches what the stored plan was built
+    from, ("fresh", plan) otherwise. One freshness rule, shared with
+    the web app: plan_view.plan_input_fingerprint().
+    """
     stored = storage.get_plan(user_id)
     if stored is None:
-        return None
+        return "none", None
     assignments, slots = _inputs(user_id)
     if plan_view.plan_input_fingerprint(assignments, slots) != stored.fingerprint:
-        return None
-    return json.loads(stored.plan_json)
+        return "stale", None
+    return "fresh", json.loads(stored.plan_json)
+
+
+def _fresh_plan(user_id: str) -> dict | None:
+    """The stored plan if the student's data still matches what it was built from."""
+    return plan_state(user_id)[1]
 
 
 # ---- Routes
@@ -115,5 +125,23 @@ async def progress(request: Request) -> Response:
     else:
         body = {key: plan[key] for key in ("fresh", "required_hours", "scheduled_hours",
                                           "unscheduled_hours", "completion_percentage", "assignments")}
-    body.update({"completed": completed, "active_count": len(active), "completed_count": len(completed)})
+    # Hours done come from completed focus sessions (api/focus.py); they sit
+    # next to the engine's scheduled and remaining hours, never inside them.
+    done = storage.done_minutes_by_assignment(user.id)
+    body["assignments"] = [
+        {**a, "done_hours": round(done.get(a["id"], 0) / 60, 2),
+         "done_percent": _done_percent(done.get(a["id"], 0), a["required_hours"])}
+        for a in body["assignments"]
+    ]
+    body.update({
+        "completed": completed, "active_count": len(active), "completed_count": len(completed),
+        "done_hours": round(sum(done.values()) / 60, 2),
+        "sessions_completed": len(storage.list_session_completions(user.id)),
+    })
     return JSONResponse(body)
+
+
+def _done_percent(done_minutes: int, required_hours: float) -> int:
+    if required_hours <= 0:
+        return 0
+    return min(100, round(100 * done_minutes / 60 / required_hours))
