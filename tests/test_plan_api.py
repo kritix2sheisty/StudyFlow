@@ -225,7 +225,9 @@ def test_progress_matches_the_plan_and_lists_completed_work(client, ana):
     assert p["fresh"] is True
     assert (p["required_hours"], p["scheduled_hours"], p["unscheduled_hours"], p["completion_percentage"]) == \
         (plan["required_hours"], plan["scheduled_hours"], plan["unscheduled_hours"], plan["completion_percentage"])
-    assert p["assignments"] == plan["assignments"]                       # completed work is not in the plan
+    # Progress carries the plan's rows plus hours done from focus sessions (PR #6).
+    without_done = [{k: v for k, v in a.items() if k not in ("done_hours", "done_percent")} for a in p["assignments"]]
+    assert without_done == plan["assignments"]                           # completed work is not in the plan
     assert p["completed"] == ["Done already"]                            # but is listed, as on the Progress page
     assert p["active_count"] == 2 and p["completed_count"] == 1
 
