@@ -3,8 +3,8 @@ tests/test_assignment_storage.py
 The Add Assignment form talking to the real backend.
 
 The form's validated strings become a models.Assignment, go through
-storage.add_assignment(), and come back through
-storage.list_assignments() as dashboard rows. These tests run that
+storage.add_assignment(ME), and come back through
+storage.list_assignments(ME) as dashboard rows. These tests run that
 round trip against a temporary database, which is the same proof the
 mentor's "refresh the browser" check gives, without a browser.
 """
@@ -14,6 +14,8 @@ from datetime import date
 import pytest
 
 import storage
+
+ME = storage.DEFAULT_USER_ID          # the built-in student; ownership tests live in test_ownership.py
 from models import Assignment, Priority
 from StudyFlow.assignments import RISK_NOT_RATED, rows_from, to_assignment
 
@@ -52,8 +54,8 @@ def test_to_assignment_strips_whitespace_and_maps_every_priority():
 
 def test_round_trip_through_storage():
     """Save through the real backend and read it back as a dashboard row."""
-    new_id = storage.add_assignment(to_assignment("Chemistry Lab", "Chemistry", "2026-09-15", "2.5", "HIGH"))
-    rows = rows_from(storage.list_assignments(include_completed=False), TODAY)
+    new_id = storage.add_assignment(ME, to_assignment("Chemistry Lab", "Chemistry", "2026-09-15", "2.5", "HIGH"))
+    rows = rows_from(storage.list_assignments(ME, include_completed=False), TODAY)
     assert rows == [{
         "id": str(new_id),
         "name": "Chemistry Lab",
@@ -72,27 +74,27 @@ def test_round_trip_through_storage():
 
 def test_rows_come_back_in_due_date_order():
     """storage.list_assignments sorts by due date, so no re-sorting is needed."""
-    storage.add_assignment(to_assignment("Later", "S", "2026-09-20", "1", "LOW"))
-    storage.add_assignment(to_assignment("Sooner", "S", "2026-09-11", "1", "LOW"))
-    storage.add_assignment(to_assignment("Middle", "S", "2026-09-15", "1", "LOW"))
-    names = [r["name"] for r in rows_from(storage.list_assignments(include_completed=False), TODAY)]
+    storage.add_assignment(ME, to_assignment("Later", "S", "2026-09-20", "1", "LOW"))
+    storage.add_assignment(ME, to_assignment("Sooner", "S", "2026-09-11", "1", "LOW"))
+    storage.add_assignment(ME, to_assignment("Middle", "S", "2026-09-15", "1", "LOW"))
+    names = [r["name"] for r in rows_from(storage.list_assignments(ME, include_completed=False), TODAY)]
     assert names == ["Sooner", "Middle", "Later"]
 
 
 def test_completed_assignments_are_not_listed_on_the_dashboard():
-    done_id = storage.add_assignment(to_assignment("Done", "S", "2026-09-15", "1", "LOW"))
-    storage.mark_assignment_complete(done_id)
-    storage.add_assignment(to_assignment("Active", "S", "2026-09-15", "1", "LOW"))
-    names = [r["name"] for r in rows_from(storage.list_assignments(include_completed=False), TODAY)]
+    done_id = storage.add_assignment(ME, to_assignment("Done", "S", "2026-09-15", "1", "LOW"))
+    storage.mark_assignment_complete(ME, done_id)
+    storage.add_assignment(ME, to_assignment("Active", "S", "2026-09-15", "1", "LOW"))
+    names = [r["name"] for r in rows_from(storage.list_assignments(ME, include_completed=False), TODAY)]
     assert names == ["Active"]
 
 
 def test_decimal_hours_survive_the_database():
-    storage.add_assignment(to_assignment("Quarter", "S", "2026-09-15", "0.25", "LOW"))
-    storage.add_assignment(to_assignment("Half", "S", "2026-09-16", "1.5", "LOW"))
-    hours = [r["hours"] for r in rows_from(storage.list_assignments(), TODAY)]
+    storage.add_assignment(ME, to_assignment("Quarter", "S", "2026-09-15", "0.25", "LOW"))
+    storage.add_assignment(ME, to_assignment("Half", "S", "2026-09-16", "1.5", "LOW"))
+    hours = [r["hours"] for r in rows_from(storage.list_assignments(ME), TODAY)]
     assert hours == ["0.25 hours", "1.5 hours"]
 
 
 def test_empty_database_gives_no_rows():
-    assert rows_from(storage.list_assignments(include_completed=False), TODAY) == []
+    assert rows_from(storage.list_assignments(ME, include_completed=False), TODAY) == []

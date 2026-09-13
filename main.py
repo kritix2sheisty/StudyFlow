@@ -8,6 +8,9 @@ Run with: python main.py
 from datetime import date, datetime
 
 import storage
+
+# The CLI has no login yet: it acts as the built-in student.
+USER = storage.DEFAULT_USER_ID
 from models import Assignment, Class, Priority, Test, TimeSlot, Weekday
 from scheduler import prioritize_assignments
 from schedule_analyzer import format_analysis
@@ -67,7 +70,7 @@ def add_assignment_flow() -> None:
     due = prompt_date("Due date")
     hours = prompt_float("Estimated time (hours)")
     priority = prompt_priority("Priority")
-    storage.add_assignment(Assignment(
+    storage.add_assignment(USER, Assignment(
         name=name, subject=subject, due_date=due,
         estimated_hours=hours, priority=priority,
     ))
@@ -96,7 +99,7 @@ def add_time_slot_flow() -> None:
             print("  Not a valid weekday, try again.")
     start_hour = prompt_int_range("Start hour (24h clock)", 0, 23)
     end_hour = prompt_int_range("End hour (24h clock)", start_hour + 1, 24)
-    storage.add_time_slot(TimeSlot(weekday=weekday, start_hour=start_hour, end_hour=end_hour))
+    storage.add_time_slot(USER, TimeSlot(weekday=weekday, start_hour=start_hour, end_hour=end_hour))
     print("Added time slot.")
 
 
@@ -109,9 +112,9 @@ def prompt_id(label: str) -> int:
 
 
 def edit_assignment_flow() -> None:
-    view_list(storage.list_assignments(), "No assignments to edit.")
+    view_list(storage.list_assignments(USER), "No assignments to edit.")
     assignment_id = prompt_id("Assignment")
-    existing = next((a for a in storage.list_assignments() if a.id == assignment_id), None)
+    existing = next((a for a in storage.list_assignments(USER) if a.id == assignment_id), None)
     if not existing:
         print("  No assignment with that id.")
         return
@@ -126,27 +129,27 @@ def edit_assignment_flow() -> None:
     priority = Priority(int(raw_priority)) if raw_priority in ("1", "2", "3") else existing.priority
     updated = Assignment(id=assignment_id, name=name, subject=subject, due_date=due,
                           estimated_hours=hours, priority=priority, completed=existing.completed)
-    storage.update_assignment(updated)
+    storage.update_assignment(USER, updated)
     print("Assignment updated.")
 
 
 def delete_assignment_flow() -> None:
-    view_list(storage.list_assignments(), "No assignments to delete.")
+    view_list(storage.list_assignments(USER), "No assignments to delete.")
     assignment_id = prompt_id("Assignment")
-    if storage.delete_assignment(assignment_id):
+    if storage.delete_assignment(USER, assignment_id):
         print("Assignment deleted.")
     else:
         print("  No assignment with that id.")
 
 
 def toggle_assignment_complete_flow() -> None:
-    view_list(storage.list_assignments(), "No assignments yet.")
+    view_list(storage.list_assignments(USER), "No assignments yet.")
     assignment_id = prompt_id("Assignment")
-    existing = next((a for a in storage.list_assignments() if a.id == assignment_id), None)
+    existing = next((a for a in storage.list_assignments(USER) if a.id == assignment_id), None)
     if not existing:
         print("  No assignment with that id.")
         return
-    storage.mark_assignment_complete(assignment_id, not existing.completed)
+    storage.mark_assignment_complete(USER, assignment_id, not existing.completed)
     state = "incomplete" if existing.completed else "complete"
     print(f"Marked as {state}.")
 
@@ -170,9 +173,9 @@ def delete_test_flow() -> None:
 
 
 def delete_time_slot_flow() -> None:
-    view_list(storage.list_time_slots(), "No time slots to delete.")
+    view_list(storage.list_time_slots(USER), "No time slots to delete.")
     slot_id = prompt_id("Time slot")
-    if storage.delete_time_slot(slot_id):
+    if storage.delete_time_slot(USER, slot_id):
         print("Time slot deleted.")
     else:
         print("  No time slot with that id.")
@@ -188,8 +191,8 @@ def view_list(items, empty_message: str) -> None:
 
 def generate_study_plan_flow() -> None:
     """The whole pipeline: prioritize, schedule, analyze, flag, report."""
-    assignments = storage.list_assignments(include_completed=False)
-    slots = storage.list_time_slots()
+    assignments = storage.list_assignments(USER, include_completed=False)
+    slots = storage.list_time_slots(USER)
     plan = generate_study_plan(assignments, slots)
     print(format_study_plan(plan))
     if not slots:
@@ -198,8 +201,8 @@ def generate_study_plan_flow() -> None:
 
 def schedule_analysis_flow() -> None:
     """The analysis report: totals, then status, hours and risk per assignment."""
-    assignments = storage.list_assignments(include_completed=False)
-    slots = storage.list_time_slots()
+    assignments = storage.list_assignments(USER, include_completed=False)
+    slots = storage.list_time_slots(USER)
     plan = generate_study_plan(assignments, slots)
     print(format_analysis(plan.schedule, assignments, slots, today=plan.today))
 
@@ -235,11 +238,11 @@ def manage_classes() -> None:
 def manage_assignments() -> None:
     run_menu("\nMANAGE ASSIGNMENTS", {
         "1": ("Add an assignment", add_assignment_flow),
-        "2": ("View all assignments", lambda: view_list(storage.list_assignments(), "No assignments yet.")),
+        "2": ("View all assignments", lambda: view_list(storage.list_assignments(USER), "No assignments yet.")),
         "3": ("View assignments due in the next 7 days",
-              lambda: view_list(storage.upcoming_assignments(7), "Nothing due in the next 7 days.")),
+              lambda: view_list(storage.upcoming_assignments(USER, 7), "Nothing due in the next 7 days.")),
         "4": ("View prioritized assignment list",
-              lambda: view_list(prioritize_assignments(storage.list_assignments()),
+              lambda: view_list(prioritize_assignments(storage.list_assignments(USER)),
                                 "No active assignments to prioritize.")),
         "5": ("Edit an assignment", edit_assignment_flow),
         "6": ("Mark an assignment complete / incomplete", toggle_assignment_complete_flow),
@@ -258,7 +261,7 @@ def manage_tests() -> None:
 def manage_study_time() -> None:
     run_menu("\nMANAGE STUDY TIME", {
         "1": ("Add available study time", add_time_slot_flow),
-        "2": ("View available time slots", lambda: view_list(storage.list_time_slots(), "No time slots yet.")),
+        "2": ("View available time slots", lambda: view_list(storage.list_time_slots(USER), "No time slots yet.")),
         "3": ("Delete a time slot", delete_time_slot_flow),
     })
 
