@@ -29,6 +29,8 @@ modes both work; cards lift slightly on hover to feel interactive.
 Run with:  reflex run
 """
 
+import asyncio
+import time
 from datetime import date, datetime
 
 import reflex as rx
@@ -44,9 +46,12 @@ from storage import (
     mark_assignment_complete,
     update_assignment,
 )
+from schedule_builder import DEFAULT_BREAK_MINUTES
 from StudyFlow import assignments as forms
+from StudyFlow import focus
 from StudyFlow import plan_view
 from StudyFlow import study_time
+from StudyFlow.focus import Session
 from StudyFlow.plan_view import Block, Day, StatusRow
 from study_plan import generate_study_plan
 
@@ -66,7 +71,8 @@ RISK_INK = {risk: f"var(--{color}-11)" for risk, color in RISK_COLORS.items()}  
 
 # Navigation: label -> route. Schedule and Progress are visual only until
 # those pages exist.
-NAV_ITEMS = {"Dashboard": "/", "Assignments": "/assignments", "Schedule": "/schedule", "Progress": "/progress"}
+NAV_ITEMS = {"Dashboard": "/", "Assignments": "/assignments", "Schedule": "/schedule",
+             "Progress": "/progress", "Focus": "/focus"}
 
 # Shown wherever a plan would be, once its inputs have changed.
 STALE_MESSAGE = "Your study plan needs to be regenerated. Your {what} changed since it was made."
@@ -123,6 +129,7 @@ class DashboardState(rx.State):
         self.plan_fingerprint = ""
         self.plan_days = []
         self.today_plan = []
+        self.today_sessions = []
         self.plan_statuses = []
         self.plan_required = "0.0"
         self.plan_scheduled = "0.0"
@@ -138,6 +145,7 @@ class DashboardState(rx.State):
             self.plan_message = STALE_MESSAGE.format(what="assignments and study times")
     plan_days: list[Day] = []
     today_plan: list[dict[str, str]] = []
+    today_sessions: list[Session] = []          # today's work blocks, for the Focus page
     plan_statuses: list[StatusRow] = []
     plan_required: str = "0.0"
     plan_scheduled: str = "0.0"
@@ -327,6 +335,7 @@ class DashboardState(rx.State):
 
         self.plan_days = days
         self.today_plan = plan_view.today_blocks(plan, today)
+        self.today_sessions = focus.sessions_for_today(plan, assignments, today)
         self.plan_statuses = statuses
         numbers = plan_view.totals(plan)
         self.plan_required = numbers["required"]
@@ -596,6 +605,173 @@ def header(active: str = "Dashboard") -> rx.Component:
         width="100%", align="center", wrap="wrap", spacing="4", padding_y="4",
         border_bottom=f"1px solid {rx.color('gray', 4)}",
     )
+
+
+# ---------------------------------------------------------------------
+# Focus: one session, one countdown (v1.2)
+# ---------------------------------------------------------------------
+
+class FocusState(rx.State):
+    """
+    The Focus page's own state: which of today's sessions is on the
+    screen and where its countdown stands.
+
+    Modes:  none        nothing to study right now (or no plan yet)
+            ready       a session is on, countdown not started
+            running     counting down
+            paused      countdown held
+            complete    the countdown reached zero
+            break       the break countdown is running
+            break_over  the break ended
+            marked      the assignment was marked complete from here
+
+    The countdown is kept as a deadline on the server, so a missed
+    update never drifts it: every tick recomputes what is left from
+    the wall clock. A background task ticks once a second while
+    something is counting.
+    """
+    mode: str = "none"
+    has_plan: bool = False
+    label: str = ""
+    subject: str = ""
+    time_label: str = ""
+    session_minutes: int = 0
+    next_label: str = ""
+    next_time: str = ""
+    total_seconds: int = 0
+    remaining_seconds: int = 0
+    completed_minutes: int = 0
+    break_minutes: int = DEFAULT_BREAK_MINUTES
+    _deadline: float = 0.0
+    _timer_token: int = 0
+    _finished: str = ""            # the session moved past by "Next session"
+
+    @rx.var
+    def clock(self) -> str:
+        return focus.clock(self.remaining_seconds)
+
+    @rx.var
+    def counting(self) -> bool:
+        return self.mode in ("running", "break")
+
+    # ---- Loading
+
+    def _apply(self, sessions: list, has_plan: bool, now_minute: int, after: str | None = None) -> None:
+        """Choose the current and next session for this moment; keep a running countdown alive."""
+        self.has_plan = has_plan
+        if not has_plan:
+            self.mode, self.label, self.subject, self.time_label = "none", "", "", ""
+            self.next_label = self.next_time = ""
+            self.session_minutes = self.total_seconds = self.remaining_seconds = 0
+            return
+        current, nxt = focus.pick(sessions, now_minute, after=after)
+        self.next_label = nxt.label if nxt else ""
+        self.next_time = nxt.time if nxt else ""
+        if current is not None and current.label == self.label and self.mode in ("running", "paused", "complete", "break", "break_over"):
+            return                                                   # a page load mid-session changes nothing
+        if current is None:
+            self.mode, self.label, self.subject, self.time_label = "none", "", "", ""
+            self.session_minutes = self.total_seconds = self.remaining_seconds = 0
+            return
+        self.mode = "ready"
+        self.label, self.subject, self.time_label = current.label, current.subject, current.time
+        self.session_minutes = current.minutes
+        self.total_seconds = self.remaining_seconds = current.minutes * 60
+
+    async def load_focus(self):
+        """On page load: read today's sessions from the dashboard state."""
+        dash = await self.get_state(DashboardState)
+        now = datetime.now()
+        self._apply(list(dash.today_sessions), dash.has_plan, now.hour * 60 + now.minute)
+
+    async def next_session(self):
+        """After a session (and its break): move on to whatever follows today."""
+        dash = await self.get_state(DashboardState)
+        now = datetime.now()
+        finished = self.label
+        self._finished = finished
+        self.label = ""
+        self.mode = "none"
+        self._apply(list(dash.today_sessions), dash.has_plan, now.hour * 60 + now.minute, after=finished or None)
+
+    # ---- The countdown
+
+    def tick(self):
+        """Recompute what is left from the deadline; finish when it reaches zero."""
+        if self.mode not in ("running", "break"):
+            return
+        self.remaining_seconds = max(0, round(self._deadline - time.time()))
+        if self.remaining_seconds == 0:
+            if self.mode == "running":
+                self.mode = "complete"
+                self.completed_minutes = self.total_seconds // 60
+            else:
+                self.mode = "break_over"
+
+    def _arm(self, seconds: int):
+        self._deadline = time.time() + seconds
+        self._timer_token += 1
+        return FocusState.run_timer
+
+    def start_session(self):
+        """Start, or resume after a pause."""
+        if self.mode not in ("ready", "paused"):
+            return
+        self.mode = "running"
+        return self._arm(self.remaining_seconds)
+
+    def pause_session(self):
+        if self.mode != "running":
+            return
+        self.tick()
+        self.mode = "paused" if self.remaining_seconds > 0 else self.mode
+        self._timer_token += 1
+
+    def reset_session(self):
+        if self.mode not in ("running", "paused", "complete"):
+            return
+        self.mode = "ready"
+        self.remaining_seconds = self.total_seconds
+        self._timer_token += 1
+
+    def take_break(self):
+        """The plan's own break length, counted down here."""
+        if self.mode != "complete":
+            return
+        self.mode = "break"
+        self.total_seconds = self.remaining_seconds = self.break_minutes * 60
+        return self._arm(self.remaining_seconds)
+
+    def skip_break(self):
+        if self.mode != "break":
+            return
+        self.mode = "break_over"
+        self.remaining_seconds = 0
+        self._timer_token += 1
+
+    async def mark_complete(self):
+        """Mark the assignment complete through the dashboard's own handler."""
+        dash = await self.get_state(DashboardState)
+        row = next((r for r in dash.assignments if r["name"] == self.label), None)
+        self.mode = "marked"
+        self._timer_token += 1
+        if row is None:
+            return rx.toast.info("That assignment is no longer in your list.")
+        return DashboardState.complete_assignment(row["id"])
+
+    @rx.event(background=True)
+    async def run_timer(self):
+        """Tick once a second until the countdown ends or is stopped."""
+        async with self:
+            token = self._timer_token
+        while True:
+            await asyncio.sleep(1)
+            async with self:
+                if self._timer_token != token or self.mode not in ("running", "break"):
+                    return
+                self.tick()
+                if self.mode not in ("running", "break"):
+                    return
 
 
 # ---------------------------------------------------------------------
@@ -1515,6 +1691,168 @@ def index() -> rx.Component:
 app = rx.App(
     theme=rx.theme(accent_color="indigo", gray_color="slate", radius="large", scaling="100%"),
 )
+
+# ---------------------------------------------------------------------
+# Focus page (v1.2)
+# ---------------------------------------------------------------------
+
+def focus_page() -> rx.Component:
+    """
+    One session, one countdown. Built to be left open while studying:
+    no cards, no numbers competing with the clock, nothing that moves
+    except the digits.
+    """
+    f = FocusState
+    d = DashboardState
+
+    def big_clock() -> rx.Component:
+        return rx.text(
+            f.clock, size="9", weight="bold", line_height="1", letter_spacing="-0.02em",
+            font_family="ui-monospace, 'Cascadia Mono', Consolas, monospace",
+            style={"fontVariantNumeric": "tabular-nums", "fontSize": "clamp(4rem, 14vw, 7.5rem)"},
+        )
+
+    def title_block(kicker: str) -> rx.Component:
+        return rx.vstack(
+            eyebrow(kicker),
+            rx.text(f.subject, size="3", color_scheme="gray"),
+            rx.heading(f.label, size=rx.breakpoints(initial="7", md="8"), text_align="center"),
+            spacing="1", align="center",
+        )
+
+    def caption() -> rx.Component:
+        return rx.text("Session: ", f.session_minutes, " minutes · ", f.time_label, size="2", color_scheme="gray")
+
+    def up_next() -> rx.Component:
+        return rx.cond(
+            f.next_label != "",
+            rx.vstack(
+                rx.text("Up next", size="1", weight="bold", color_scheme="gray", letter_spacing="0.08em"),
+                rx.text(f.next_label, size="4", weight="medium"),
+                rx.text(f.next_time, size="2", color_scheme="gray"),
+                spacing="1", align="center", padding_top="7",
+                border_top=f"1px solid {rx.color('gray', 4)}", width="100%", margin_top="8",
+            ),
+            rx.box(),
+        )
+
+    nothing_now = rx.vstack(
+        rx.cond(
+            f.has_plan,
+            rx.vstack(
+                rx.heading("No study session right now.", size="6", text_align="center"),
+                rx.text("Come back when your next block starts.", size="2", color_scheme="gray"),
+                spacing="2", align="center",
+            ),
+            rx.vstack(
+                rx.heading("No study plan yet.", size="6", text_align="center"),
+                rx.text("Generate a plan and this page will show what to work on now.", size="2", color_scheme="gray"),
+                rx.link(rx.button("Go to the dashboard", size="3"), href="/"),
+                spacing="3", align="center",
+            ),
+        ),
+        up_next(),
+        spacing="4", align="center", width="100%",
+    )
+
+    ready = rx.vstack(
+        title_block("Current study session"),
+        big_clock(),
+        rx.button("Start Session", on_click=f.start_session, size="4", width="min(100%, 20rem)"),
+        caption(),
+        up_next(),
+        spacing="6", align="center", width="100%",
+    )
+
+    running = rx.vstack(
+        title_block("Studying"),
+        big_clock(),
+        rx.hstack(
+            rx.button("Pause", on_click=f.pause_session, size="3", variant="soft"),
+            rx.button("Reset", on_click=f.reset_session, size="3", variant="ghost", color_scheme="gray"),
+            spacing="3",
+        ),
+        caption(),
+        up_next(),
+        spacing="6", align="center", width="100%",
+    )
+
+    paused = rx.vstack(
+        title_block("Paused"),
+        big_clock(),
+        rx.hstack(
+            rx.button("Resume", on_click=f.start_session, size="3"),
+            rx.button("Reset", on_click=f.reset_session, size="3", variant="ghost", color_scheme="gray"),
+            spacing="3",
+        ),
+        caption(),
+        up_next(),
+        spacing="6", align="center", width="100%",
+    )
+
+    complete = rx.vstack(
+        eyebrow("Session complete"),
+        rx.heading(f.label, size=rx.breakpoints(initial="7", md="8"), text_align="center"),
+        rx.text(f.completed_minutes, " minutes completed", size="4", color_scheme="gray"),
+        rx.vstack(
+            rx.button("Mark Complete", on_click=f.mark_complete, size="3", width="min(100%, 20rem)"),
+            rx.button("Take Break", on_click=f.take_break, size="3", variant="soft", width="min(100%, 20rem)"),
+            rx.button("Next session", on_click=f.next_session, size="3", variant="ghost", color_scheme="gray",
+                      width="min(100%, 20rem)"),
+            spacing="2", align="center", width="100%",
+        ),
+        up_next(),
+        spacing="5", align="center", width="100%",
+    )
+
+    on_break = rx.vstack(
+        eyebrow("Break"),
+        rx.heading("Step away from the screen.", size="6", text_align="center"),
+        big_clock(),
+        rx.button("Skip break", on_click=f.skip_break, size="3", variant="ghost", color_scheme="gray"),
+        rx.text(f.break_minutes, "-minute break, as in your plan", size="2", color_scheme="gray"),
+        up_next(),
+        spacing="6", align="center", width="100%",
+    )
+
+    break_over = rx.vstack(
+        eyebrow("Break over"),
+        rx.heading("Ready for the next one?", size="6", text_align="center"),
+        rx.button("Next session", on_click=f.next_session, size="4", width="min(100%, 20rem)"),
+        up_next(),
+        spacing="5", align="center", width="100%",
+    )
+
+    marked = rx.vstack(
+        eyebrow("Marked complete"),
+        rx.heading("Nice work.", size="6", text_align="center"),
+        rx.text("Your plan needs regenerating before the next session.", size="2", color_scheme="gray"),
+        rx.link(rx.button("Go to the dashboard", size="3"), href="/"),
+        spacing="3", align="center", width="100%",
+    )
+
+    body = rx.match(
+        f.mode,
+        ("ready", ready), ("running", running), ("paused", paused), ("complete", complete),
+        ("break", on_break), ("break_over", break_over), ("marked", marked),
+        nothing_now,
+    )
+
+    return rx.box(
+        rx.container(
+            rx.vstack(
+                header(active="Focus"),
+                rx.center(
+                    rx.box(body, width="100%", max_width="40rem"),
+                    width="100%", padding_y=rx.breakpoints(initial="8", md="9"), min_height="60vh",
+                ),
+                spacing=SECTION_GAP, width="100%", padding_bottom="9",
+            ),
+            size="4", padding_x=rx.breakpoints(initial="4", md="6"),
+        ),
+        width="100%", min_height="100vh",
+    )
+
 app.add_page(index, title="StudyFlow", on_load=DashboardState.load_data)
 app.add_page(assignments_page, route="/assignments", title="Assignments · StudyFlow",
              on_load=DashboardState.load_data)
@@ -1522,3 +1860,5 @@ app.add_page(schedule_page, route="/schedule", title="Schedule · StudyFlow",
              on_load=DashboardState.load_data)
 app.add_page(progress_page, route="/progress", title="Progress · StudyFlow",
              on_load=DashboardState.load_data)
+app.add_page(focus_page, route="/focus", title="Focus · StudyFlow",
+             on_load=[DashboardState.load_data, FocusState.load_focus])
