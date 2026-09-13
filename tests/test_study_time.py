@@ -10,6 +10,8 @@ rows the dashboard renders.
 import pytest
 
 import storage
+
+ME = storage.DEFAULT_USER_ID          # the built-in student; ownership tests live in test_ownership.py
 from models import TimeSlot, Weekday
 from StudyFlow.study_time import (
     END_CHOICES,
@@ -96,8 +98,8 @@ def test_to_time_slot_uses_the_models_24_hour_integers():
 def test_round_trip_through_storage(tmp_path):
     storage.set_db_path(tmp_path / "slots.db")
     storage.init_db()
-    new_id = storage.add_time_slot(to_time_slot("Wednesday", "5:00 PM", "7:00 PM"))
-    rows = rows_from(storage.list_time_slots())
+    new_id = storage.add_time_slot(ME, to_time_slot("Wednesday", "5:00 PM", "7:00 PM"))
+    rows = rows_from(storage.list_time_slots(ME))
     assert rows == [{"id": str(new_id), "weekday": "Wednesday", "time": "5:00 PM – 7:00 PM", "hours": "2h"}]
 
 

@@ -36,6 +36,7 @@ from datetime import date, datetime
 import reflex as rx
 
 from storage import (
+    DEFAULT_USER_ID,
     add_assignment,
     add_time_slot,
     delete_assignment,
@@ -105,6 +106,9 @@ class DashboardState(rx.State):
 
     # Assignments come from the database (storage.py) and are loaded
     # when the page opens; see load_assignments.
+    # Whose data this is. Until accounts exist every browser session is
+    # the built-in student; the API layer will set this from a login.
+    user_id: str = DEFAULT_USER_ID
     assignments: list[dict[str, str]] = []
 
     # The generated plan, flattened by StudyFlow/plan_view.py. It lives
@@ -162,7 +166,7 @@ class DashboardState(rx.State):
 
     def load_assignments(self):
         """Read the assignments from the database: active ones soonest due first, completed ones by name."""
-        stored = list_assignments(include_completed=True)
+        stored = list_assignments(self.user_id, include_completed=True)
         self.assignments = forms.rows_from([a for a in stored if not a.completed], date.today())
         self.completed_names = [a.name for a in stored if a.completed]
 
@@ -176,7 +180,7 @@ class DashboardState(rx.State):
     slot_hours: str = "0"
 
     def load_slots(self):
-        stored = list_time_slots()
+        stored = list_time_slots(self.user_id)
         self.slots = study_time.rows_from(stored)
         self.slot_hours = f"{study_time.total_hours(stored):g}"
 
@@ -195,7 +199,7 @@ class DashboardState(rx.State):
         if not self.has_plan:
             return
         current = plan_view.plan_input_fingerprint(
-            list_assignments(include_completed=False), list_time_slots())
+            list_assignments(self.user_id, include_completed=False), list_time_slots(self.user_id))
         if current != self.plan_fingerprint:
             self._invalidate_plan("assignments or study times")
             return
@@ -249,7 +253,7 @@ class DashboardState(rx.State):
             return
         slot = study_time.to_time_slot(self.slot_weekday, self.slot_start, self.slot_end)
         try:
-            add_time_slot(slot)
+            add_time_slot(self.user_id, slot)
         except Exception:
             self.slot_save_error = "StudyFlow could not save that study time. Please try again."
             return
@@ -279,7 +283,7 @@ class DashboardState(rx.State):
 
     def confirm_delete_slot(self):
         label = self.slot_delete_label
-        deleted = delete_time_slot(int(self.slot_delete_id))
+        deleted = delete_time_slot(self.user_id, int(self.slot_delete_id))
         self.cancel_delete_slot()
         self.load_slots()
         if not deleted:
@@ -316,8 +320,8 @@ class DashboardState(rx.State):
         so a message explains what to add. If the engine raises, the
         dashboard stays usable and shows a plain message.
         """
-        assignments = list_assignments(include_completed=False)
-        slots = list_time_slots()
+        assignments = list_assignments(self.user_id, include_completed=False)
+        slots = list_time_slots(self.user_id)
         self.plan_message = plan_view.guard_message(assignments, slots)
         if self.plan_message:
             self.has_plan = False
@@ -436,7 +440,7 @@ class DashboardState(rx.State):
 
     def open_edit(self, assignment_id: str):
         """Load the stored assignment into the form and open it in edit mode."""
-        stored = next((a for a in list_assignments() if str(a.id) == assignment_id), None)
+        stored = next((a for a in list_assignments(self.user_id) if str(a.id) == assignment_id), None)
         if stored is None:
             return rx.toast.error("That assignment no longer exists.")
         self.open_form()
@@ -465,7 +469,7 @@ class DashboardState(rx.State):
         try:
             if self.is_editing:
                 assignment.id = int(self.editing_id)
-                if not update_assignment(assignment):
+                if not update_assignment(self.user_id, assignment):
                     # No row changed, so nothing the plan depends on did:
                     # the plan stays, the list refreshes, the form stays open.
                     self.load_assignments()
@@ -473,7 +477,7 @@ class DashboardState(rx.State):
                     return
                 message = f"Saved changes to {assignment.name}{overdue}."
             else:
-                add_assignment(assignment)
+                add_assignment(self.user_id, assignment)
                 message = f"Added {assignment.name}{overdue}."
         except Exception:
             self.form_save_error = "StudyFlow could not save that assignment. Please try again."
@@ -490,7 +494,7 @@ class DashboardState(rx.State):
         Mark it done; it leaves the active list but stays in the
         database. The plan is invalidated only if a row really changed.
         """
-        updated = mark_assignment_complete(int(assignment_id), True)
+        updated = mark_assignment_complete(self.user_id, int(assignment_id), True)
         self.load_assignments()
         if not updated:
             return rx.toast.info("That assignment was already gone.")
@@ -519,7 +523,7 @@ class DashboardState(rx.State):
 
     def confirm_delete(self):
         name = self.delete_name
-        deleted = delete_assignment(int(self.delete_id))
+        deleted = delete_assignment(self.user_id, int(self.delete_id))
         self.cancel_delete()
         self.load_assignments()
         if not deleted:

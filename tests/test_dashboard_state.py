@@ -14,6 +14,8 @@ from datetime import date, timedelta
 import pytest
 
 import storage
+
+ME = storage.DEFAULT_USER_ID          # the built-in student; ownership tests live in test_ownership.py
 from StudyFlow.assignments import RISK_NOT_RATED
 from StudyFlow.StudyFlow import DashboardState
 
@@ -41,7 +43,7 @@ def fill(state: DashboardState, name="Chemistry Lab", subject="Chemistry",
 def test_load_assignments_reads_the_database():
     state = fresh_state()
     assert state.assignments == []
-    storage.add_assignment(storage.Assignment(name="Stored", subject="S",
+    storage.add_assignment(ME, storage.Assignment(name="Stored", subject="S",
                                               due_date=date.today() + timedelta(days=2),
                                               estimated_hours=1))
     state.load_assignments()
@@ -55,7 +57,7 @@ def test_submit_saves_through_storage_and_refreshes_the_dashboard():
     fill(state)
     state.submit_form()
 
-    stored = storage.list_assignments()
+    stored = storage.list_assignments(ME)
     assert len(stored) == 1
     assert stored[0].name == "Chemistry Lab"
     assert stored[0].estimated_hours == 2.5
@@ -73,7 +75,7 @@ def test_submit_with_an_empty_form_saves_nothing_and_keeps_the_form_open():
     state = fresh_state()
     state.open_form()
     state.submit_form()
-    assert storage.list_assignments() == []
+    assert storage.list_assignments(ME) == []
     assert state.form_open is True
     assert all(state.form_errors[f] for f in ("name", "subject", "due", "hours"))
     assert state.form_errors["priority"] == ""      # MEDIUM by default
@@ -99,7 +101,7 @@ def test_cancel_clears_the_form_without_saving():
     state.close_form()
     assert state.form_open is False
     assert state.form_name == ""
-    assert storage.list_assignments() == []
+    assert storage.list_assignments(ME) == []
 
 
 # ---------- Edit, complete, delete ----------
@@ -132,7 +134,7 @@ def test_edit_updates_the_database_row_not_a_copy():
     state.set_form_due((date.today() + timedelta(days=2)).isoformat())
     state.submit_form()
 
-    stored = storage.list_assignments()
+    stored = storage.list_assignments(ME)
     assert len(stored) == 1                      # updated in place, not duplicated
     assert stored[0].id == int(row_id)
     assert stored[0].estimated_hours == 4 and stored[0].priority.name == "LOW"
@@ -149,7 +151,7 @@ def test_edit_validation_keeps_edit_mode():
     state.submit_form()
     assert state.form_open is True and state.editing_id == row_id
     assert state.form_errors["name"]
-    assert storage.list_assignments()[0].name == "Chemistry Lab"
+    assert storage.list_assignments(ME)[0].name == "Chemistry Lab"
 
 
 def test_open_edit_on_a_missing_assignment_does_not_open_the_form():
@@ -165,7 +167,7 @@ def test_complete_removes_it_from_the_active_list_but_keeps_the_row():
     state.complete_assignment(row_id)
     assert [r["name"] for r in state.assignments] == ["Other"]
     assert state.assignment_count == "1"
-    done = [a for a in storage.list_assignments() if a.id == int(row_id)]
+    done = [a for a in storage.list_assignments(ME) if a.id == int(row_id)]
     assert done and done[0].completed is True
 
 
@@ -174,10 +176,10 @@ def test_delete_asks_then_removes_the_row():
     row_id = add_one(state)
     state.ask_delete(row_id, "Chemistry Lab")
     assert state.delete_open is True and state.delete_name == "Chemistry Lab"
-    assert len(storage.list_assignments()) == 1          # nothing gone yet
+    assert len(storage.list_assignments(ME)) == 1          # nothing gone yet
     state.confirm_delete()
     assert state.delete_open is False and state.delete_id == ""
-    assert storage.list_assignments() == []
+    assert storage.list_assignments(ME) == []
     assert state.assignments == []
 
 
@@ -186,11 +188,11 @@ def test_confirming_a_delete_for_a_row_that_is_already_gone_does_not_crash():
     state = fresh_state()
     row_id = add_one(state)
     state.ask_delete(row_id, "Chemistry Lab")
-    storage.delete_assignment(int(row_id))            # gone behind the dialog's back
+    storage.delete_assignment(ME, int(row_id))            # gone behind the dialog's back
     state.confirm_delete()
     assert state.delete_open is False
     assert state.assignments == []
-    assert storage.list_assignments() == []
+    assert storage.list_assignments(ME) == []
 
 
 def test_cancelling_delete_keeps_the_row():
@@ -199,11 +201,11 @@ def test_cancelling_delete_keeps_the_row():
     state.ask_delete(row_id, "Chemistry Lab")
     state.cancel_delete()
     assert state.delete_open is False
-    assert len(storage.list_assignments()) == 1
+    assert len(storage.list_assignments(ME)) == 1
     state.ask_delete(row_id, "Chemistry Lab")
     state.set_delete_open(False)                         # Escape / click outside
     assert state.delete_open is False
-    assert len(storage.list_assignments()) == 1
+    assert len(storage.list_assignments(ME)) == 1
 
 
 # ---------- Study time ----------
@@ -218,7 +220,7 @@ def add_slot(state: DashboardState, weekday="Monday", start="4:00 PM", end="6:00
 
 def test_load_data_reads_slots_and_assignments():
     state = fresh_state()
-    storage.add_time_slot(storage.TimeSlot(weekday=storage.Weekday.WEDNESDAY, start_hour=17, end_hour=19))
+    storage.add_time_slot(ME, storage.TimeSlot(weekday=storage.Weekday.WEDNESDAY, start_hour=17, end_hour=19))
     state.load_data()
     assert [r["time"] for r in state.slots] == ["5:00 PM – 7:00 PM"]
     assert state.slot_hours == "2"
@@ -228,7 +230,7 @@ def test_load_data_reads_slots_and_assignments():
 def test_add_study_time_saves_the_models_24_hour_integers():
     state = fresh_state()
     add_slot(state, "Monday", "4:00 PM", "6:00 PM")
-    stored = storage.list_time_slots()
+    stored = storage.list_time_slots(ME)
     assert len(stored) == 1
     assert stored[0].weekday is storage.Weekday.MONDAY
     assert (stored[0].start_hour, stored[0].end_hour) == (16, 18)
@@ -250,7 +252,7 @@ def test_end_before_start_is_rejected_and_nothing_is_saved():
     add_slot(state, "Monday", "6:00 PM", "4:00 PM")
     assert state.slot_form_open is True
     assert "later than the start" in state.slot_errors["end"]
-    assert storage.list_time_slots() == []
+    assert storage.list_time_slots(ME) == []
 
 
 def test_empty_slot_form_is_rejected():
@@ -258,7 +260,7 @@ def test_empty_slot_form_is_rejected():
     add_slot(state, "", "", "")
     assert state.slot_form_open is True
     assert all(state.slot_errors[f] for f in ("weekday", "start", "end"))
-    assert storage.list_time_slots() == []
+    assert storage.list_time_slots(ME) == []
 
 
 def test_cancel_slot_form_resets_to_the_defaults():
@@ -268,7 +270,7 @@ def test_cancel_slot_form_resets_to_the_defaults():
     state.close_slot_form()
     assert state.slot_form_open is False
     assert (state.slot_weekday, state.slot_start, state.slot_end) == ("Monday", "4:00 PM", "6:00 PM")
-    assert storage.list_time_slots() == []
+    assert storage.list_time_slots(ME) == []
 
 
 def test_delete_slot_asks_then_removes():
@@ -276,10 +278,10 @@ def test_delete_slot_asks_then_removes():
     add_slot(state)
     slot_id = state.slots[0]["id"]
     state.ask_delete_slot(slot_id, "Monday 4:00 PM – 6:00 PM")
-    assert state.slot_delete_open is True and len(storage.list_time_slots()) == 1
+    assert state.slot_delete_open is True and len(storage.list_time_slots(ME)) == 1
     state.confirm_delete_slot()
     assert state.slot_delete_open is False
-    assert storage.list_time_slots() == [] and state.slots == []
+    assert storage.list_time_slots(ME) == [] and state.slots == []
     assert state.slot_hours == "0"
 
 
@@ -288,7 +290,7 @@ def test_cancel_delete_slot_keeps_it():
     add_slot(state)
     state.ask_delete_slot(state.slots[0]["id"], "Monday 4:00 PM – 6:00 PM")
     state.set_slot_delete_open(False)
-    assert state.slot_delete_open is False and len(storage.list_time_slots()) == 1
+    assert state.slot_delete_open is False and len(storage.list_time_slots(ME)) == 1
 
 
 # ---------- Generate Study Plan ----------
@@ -296,7 +298,7 @@ def test_cancel_delete_slot_keeps_it():
 def slot_on(days_from_today: int, start: int, end: int) -> None:
     """Study time on the weekday that falls `days_from_today` from today."""
     weekday = storage.Weekday((date.today() + timedelta(days=days_from_today)).weekday())
-    storage.add_time_slot(storage.TimeSlot(weekday=weekday, start_hour=start, end_hour=end))
+    storage.add_time_slot(ME, storage.TimeSlot(weekday=weekday, start_hour=start, end_hour=end))
 
 
 def test_generate_with_no_assignments_explains_and_makes_no_plan():
@@ -501,7 +503,7 @@ def test_completing_an_assignment_that_is_already_gone_does_not_invalidate_the_p
     """Nothing changed in the database, so the plan is not declared stale."""
     state = planned_state()
     missing = state.assignments[0]["id"]
-    storage.delete_assignment(int(missing))                     # gone behind the app's back
+    storage.delete_assignment(ME, int(missing))                     # gone behind the app's back
     state.complete_assignment(missing)
     assert state.has_plan is True and state.plan_stale is False
     assert all(r["id"] != missing for r in state.assignments)   # the list was still refreshed
@@ -511,7 +513,7 @@ def test_editing_an_assignment_that_is_already_gone_shows_an_error_and_keeps_the
     state = planned_state()
     missing = state.assignments[0]["id"]
     state.open_edit(missing)
-    storage.delete_assignment(int(missing))
+    storage.delete_assignment(ME, int(missing))
     state.set_form_hours("5")
     state.submit_form()
     assert "no longer exists" in state.form_save_error
@@ -549,7 +551,7 @@ def test_save_failure_shows_a_message_and_keeps_the_form_open(monkeypatch):
     assert state.form_open is True
     assert "could not save" in state.form_save_error
     assert state.form_name == "Chemistry Lab"          # nothing was thrown away
-    assert storage.list_assignments() == []
+    assert storage.list_assignments(ME) == []
 
 
 # ---------- Overdue dates (v1.1) ----------
@@ -666,11 +668,11 @@ from StudyFlow import plan_view as _plan_view
 
 def current_fingerprint() -> str:
     return _plan_view.plan_input_fingerprint(
-        storage.list_assignments(include_completed=False), storage.list_time_slots())
+        storage.list_assignments(ME, include_completed=False), storage.list_time_slots(ME))
 
 
 def stored(name: str):
-    return next(a for a in storage.list_assignments() if a.name == name)
+    return next(a for a in storage.list_assignments(ME) if a.name == name)
 
 
 def assert_plan_stale_after_load(state: DashboardState) -> None:
@@ -696,19 +698,19 @@ def test_reloading_with_identical_data_keeps_the_plan_and_its_risks():
 
 def test_changing_hours_in_the_database_makes_the_plan_stale():
     state = planned_state()
-    a = stored("Math"); a.estimated_hours = 5; storage.update_assignment(a)
+    a = stored("Math"); a.estimated_hours = 5; storage.update_assignment(ME, a)
     assert_plan_stale_after_load(state)
 
 
 def test_changing_a_due_date_in_the_database_makes_the_plan_stale():
     state = planned_state()
-    a = stored("Math"); a.due_date = a.due_date + timedelta(days=2); storage.update_assignment(a)
+    a = stored("Math"); a.due_date = a.due_date + timedelta(days=2); storage.update_assignment(ME, a)
     assert_plan_stale_after_load(state)
 
 
 def test_adding_an_assignment_in_the_database_makes_the_plan_stale():
     state = planned_state()
-    storage.add_assignment(storage.Assignment(name="Essay", subject="E", due_date=date.today() + timedelta(days=5),
+    storage.add_assignment(ME, storage.Assignment(name="Essay", subject="E", due_date=date.today() + timedelta(days=5),
                                               estimated_hours=1, priority=storage.Priority.LOW))
     assert_plan_stale_after_load(state)
     assert any(r["name"] == "Essay" for r in state.assignments)      # the data itself is loaded
@@ -716,33 +718,33 @@ def test_adding_an_assignment_in_the_database_makes_the_plan_stale():
 
 def test_deleting_an_assignment_in_the_database_makes_the_plan_stale():
     state = planned_state()
-    storage.delete_assignment(stored("Physics").id)
+    storage.delete_assignment(ME, stored("Physics").id)
     assert_plan_stale_after_load(state)
     assert all(r["name"] != "Physics" for r in state.assignments)
 
 
 def test_completing_an_assignment_in_the_database_makes_the_plan_stale():
     state = planned_state()
-    storage.mark_assignment_complete(stored("Math").id, True)
+    storage.mark_assignment_complete(ME, stored("Math").id, True)
     assert_plan_stale_after_load(state)
 
 
 def test_changing_a_slot_in_the_database_makes_the_plan_stale():
     state = planned_state()
-    slot = storage.list_time_slots()[0]; slot.end_hour = 19; storage.update_time_slot(slot)
+    slot = storage.list_time_slots(ME)[0]; slot.end_hour = 19; storage.update_time_slot(ME, slot)
     assert_plan_stale_after_load(state)
 
 
 def test_deleting_a_slot_in_the_database_makes_the_plan_stale():
     state = planned_state()
-    storage.delete_time_slot(storage.list_time_slots()[0].id)
+    storage.delete_time_slot(ME, storage.list_time_slots(ME)[0].id)
     assert_plan_stale_after_load(state)
     assert len(state.slots) == 1
 
 
 def test_stale_plan_leaves_nothing_for_the_pages_to_render():
     state = planned_state()
-    storage.delete_assignment(stored("Physics").id)
+    storage.delete_assignment(ME, stored("Physics").id)
     state.load_data()
     assert state.has_plan is False
     assert state.plan_days == [] and state.today_plan == [] and state.plan_statuses == []
@@ -764,7 +766,7 @@ def test_explicit_invalidation_and_the_safety_net_agree():
 def test_regenerating_after_a_database_change_refreshes_the_fingerprint():
     state = planned_state()
     old = state.plan_fingerprint
-    storage.delete_assignment(stored("Physics").id)
+    storage.delete_assignment(ME, stored("Physics").id)
     state.load_data()
     state.generate_study_plan()
     assert state.has_plan is True and state.plan_fingerprint == current_fingerprint() != old

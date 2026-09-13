@@ -14,6 +14,8 @@ import pytest
 
 import main
 import storage
+
+ME = storage.DEFAULT_USER_ID          # the built-in student; ownership tests live in test_ownership.py
 from models import Assignment, Priority, TimeSlot, Weekday
 
 
@@ -40,15 +42,15 @@ def scripted_input(monkeypatch, answers):
 def add_week_of_work():
     """Two 2-hour slots this week and 7 hours of work, one item done."""
     today = date.today()
-    storage.add_time_slot(TimeSlot(weekday=Weekday(today.weekday()), start_hour=16, end_hour=18))
-    storage.add_time_slot(TimeSlot(weekday=Weekday((today.weekday() + 1) % 7), start_hour=16, end_hour=18))
-    storage.add_assignment(Assignment(name="Physics", subject="Physics", due_date=today + timedelta(days=1),
+    storage.add_time_slot(ME, TimeSlot(weekday=Weekday(today.weekday()), start_hour=16, end_hour=18))
+    storage.add_time_slot(ME, TimeSlot(weekday=Weekday((today.weekday() + 1) % 7), start_hour=16, end_hour=18))
+    storage.add_assignment(ME, Assignment(name="Physics", subject="Physics", due_date=today + timedelta(days=1),
                                       estimated_hours=3, priority=Priority.HIGH))
-    storage.add_assignment(Assignment(name="Math", subject="Math", due_date=today + timedelta(days=2),
+    storage.add_assignment(ME, Assignment(name="Math", subject="Math", due_date=today + timedelta(days=2),
                                       estimated_hours=2, priority=Priority.MEDIUM))
-    storage.add_assignment(Assignment(name="CS", subject="CS", due_date=today + timedelta(days=4),
+    storage.add_assignment(ME, Assignment(name="CS", subject="CS", due_date=today + timedelta(days=4),
                                       estimated_hours=2, priority=Priority.LOW))
-    storage.add_assignment(Assignment(name="Essay", subject="English", due_date=today + timedelta(days=4),
+    storage.add_assignment(ME, Assignment(name="Essay", subject="English", due_date=today + timedelta(days=4),
                                       estimated_hours=4, completed=True))
 
 
@@ -68,7 +70,7 @@ def test_generate_study_plan_flow_prints_the_full_report(capsys):
 
 def test_generate_study_plan_flow_with_no_study_time_still_reports_and_hints(capsys):
     today = date.today()
-    storage.add_assignment(Assignment(name="Physics", subject="Physics",
+    storage.add_assignment(ME, Assignment(name="Physics", subject="Physics",
                                       due_date=today + timedelta(days=2), estimated_hours=2))
     main.generate_study_plan_flow()
     out = capsys.readouterr().out

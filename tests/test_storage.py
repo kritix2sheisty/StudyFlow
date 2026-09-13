@@ -13,6 +13,8 @@ from datetime import date, timedelta
 import pytest
 
 import storage
+
+ME = storage.DEFAULT_USER_ID          # the built-in student; ownership tests live in test_ownership.py
 from models import Assignment, Class, Priority, Test, TimeSlot, Weekday
 
 
@@ -52,57 +54,57 @@ def test_delete_class():
 # ---------- Assignments ----------
 
 def test_add_and_list_assignment():
-    storage.add_assignment(Assignment(
+    storage.add_assignment(ME, Assignment(
         name="Essay 1", subject="English", due_date=date.today(),
         estimated_hours=3, priority=Priority.MEDIUM,
     ))
-    assignments = storage.list_assignments()
+    assignments = storage.list_assignments(ME)
     assert len(assignments) == 1
     assert assignments[0].name == "Essay 1"
     assert assignments[0].completed is False
 
 
 def test_update_assignment():
-    a_id = storage.add_assignment(Assignment(
+    a_id = storage.add_assignment(ME, Assignment(
         name="Lab Report", subject="Physics", due_date=date.today(),
         estimated_hours=2, priority=Priority.LOW,
     ))
-    storage.update_assignment(Assignment(
+    storage.update_assignment(ME, Assignment(
         id=a_id, name="Lab Report v2", subject="Physics",
         due_date=date.today(), estimated_hours=4, priority=Priority.HIGH,
         completed=False,
     ))
-    updated = storage.list_assignments()[0]
+    updated = storage.list_assignments(ME)[0]
     assert updated.name == "Lab Report v2"
     assert updated.estimated_hours == 4
     assert updated.priority == Priority.HIGH
 
 
 def test_delete_assignment():
-    a_id = storage.add_assignment(Assignment(name="To Delete", subject="Art", due_date=date.today()))
-    assert storage.delete_assignment(a_id) is True
-    assert storage.list_assignments() == []
+    a_id = storage.add_assignment(ME, Assignment(name="To Delete", subject="Art", due_date=date.today()))
+    assert storage.delete_assignment(ME, a_id) is True
+    assert storage.list_assignments(ME) == []
 
 
 def test_mark_assignment_complete():
-    a_id = storage.add_assignment(Assignment(name="HW", subject="Math", due_date=date.today()))
-    storage.mark_assignment_complete(a_id, True)
-    assert storage.list_assignments()[0].completed is True
-    storage.mark_assignment_complete(a_id, False)
-    assert storage.list_assignments()[0].completed is False
+    a_id = storage.add_assignment(ME, Assignment(name="HW", subject="Math", due_date=date.today()))
+    storage.mark_assignment_complete(ME, a_id, True)
+    assert storage.list_assignments(ME)[0].completed is True
+    storage.mark_assignment_complete(ME, a_id, False)
+    assert storage.list_assignments(ME)[0].completed is False
 
 
 def test_upcoming_assignments_filters_by_window_and_completion():
     today = date.today()
-    storage.add_assignment(Assignment(name="Due soon", subject="Math",
+    storage.add_assignment(ME, Assignment(name="Due soon", subject="Math",
                                        due_date=today + timedelta(days=2)))
-    storage.add_assignment(Assignment(name="Due later", subject="Math",
+    storage.add_assignment(ME, Assignment(name="Due later", subject="Math",
                                        due_date=today + timedelta(days=30)))
-    completed_id = storage.add_assignment(Assignment(name="Already done", subject="Math",
+    completed_id = storage.add_assignment(ME, Assignment(name="Already done", subject="Math",
                                                        due_date=today + timedelta(days=1)))
-    storage.mark_assignment_complete(completed_id, True)
+    storage.mark_assignment_complete(ME, completed_id, True)
 
-    upcoming = storage.upcoming_assignments(days=7)
+    upcoming = storage.upcoming_assignments(ME, days=7)
     names = {a.name for a in upcoming}
     assert names == {"Due soon"}  # "Due later" out of window, "Already done" excluded
 
@@ -127,14 +129,14 @@ def test_add_update_delete_test():
 # ---------- Time Slots ----------
 
 def test_add_update_delete_time_slot():
-    slot_id = storage.add_time_slot(TimeSlot(weekday=Weekday.MONDAY, start_hour=16, end_hour=19))
-    assert storage.list_time_slots()[0].duration_hours == 3
+    slot_id = storage.add_time_slot(ME, TimeSlot(weekday=Weekday.MONDAY, start_hour=16, end_hour=19))
+    assert storage.list_time_slots(ME)[0].duration_hours == 3
 
-    storage.update_time_slot(TimeSlot(id=slot_id, weekday=Weekday.TUESDAY,
+    storage.update_time_slot(ME, TimeSlot(id=slot_id, weekday=Weekday.TUESDAY,
                                        start_hour=17, end_hour=20))
-    updated = storage.list_time_slots()[0]
+    updated = storage.list_time_slots(ME)[0]
     assert updated.weekday == Weekday.TUESDAY
     assert updated.start_hour == 17
 
-    assert storage.delete_time_slot(slot_id) is True
-    assert storage.list_time_slots() == []
+    assert storage.delete_time_slot(ME, slot_id) is True
+    assert storage.list_time_slots(ME) == []

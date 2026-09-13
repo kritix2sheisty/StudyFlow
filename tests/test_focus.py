@@ -10,6 +10,8 @@ from datetime import date, timedelta
 import pytest
 
 import storage
+
+ME = storage.DEFAULT_USER_ID          # the built-in student; ownership tests live in test_ownership.py
 from models import Assignment, Priority, TimeSlot, Weekday
 from schedule_builder import DEFAULT_BREAK_MINUTES
 from study_plan import generate_study_plan
@@ -96,12 +98,12 @@ def test_clock_formats_minutes_and_seconds():
 
 def slot_on(days_from_today: int, start: int, end: int) -> None:
     weekday = storage.Weekday((date.today() + timedelta(days=days_from_today)).weekday())
-    storage.add_time_slot(storage.TimeSlot(weekday=weekday, start_hour=start, end_hour=end))
+    storage.add_time_slot(ME, storage.TimeSlot(weekday=weekday, start_hour=start, end_hour=end))
 
 
 def test_generating_a_plan_records_todays_sessions_and_invalidation_clears_them():
     slot_on(0, 16, 18)
-    storage.add_assignment(Assignment(name="Math", subject="Mathematics", due_date=date.today() + timedelta(days=2),
+    storage.add_assignment(ME, Assignment(name="Math", subject="Mathematics", due_date=date.today() + timedelta(days=2),
                                       estimated_hours=2, priority=Priority.HIGH))
     state = DashboardState(_reflex_internal_init=True)
     state.load_data()
