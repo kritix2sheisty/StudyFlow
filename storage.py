@@ -46,6 +46,24 @@ class User:
     created_at: str
 
 
+@dataclass
+class UserCredentials:
+    """A user plus their password hash; only api/auth.py should ask for this."""
+    id: str
+    email: str
+    created_at: str
+    password_hash: Optional[str]
+
+
+@dataclass
+class Session:
+    """A login. The database holds the token's hash, never the token."""
+    id: int
+    user_id: str
+    expires_at: str
+    revoked_at: Optional[str]
+
+
 def set_db_path(path: Path) -> None:
     """Point storage at a different database file (used by tests)."""
     global DB_PATH
@@ -76,7 +94,19 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY,
             email TEXT NOT NULL UNIQUE,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            password_hash TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL REFERENCES users(id),
+            token_hash TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            revoked_at TEXT
         )
     """)
 
@@ -131,6 +161,9 @@ def init_db() -> None:
     # column. SQLite cannot add a NOT NULL column to a populated table,
     # so the added column is nullable; every function filters by
     # user_id anyway, and the backfill leaves no row without an owner.
+    if "password_hash" not in _columns(conn, "users"):          # users table from PR #41
+        cur.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+
     for table in ("assignments", "time_slots"):
         if "user_id" not in _columns(conn, table):
             cur.execute(f"ALTER TABLE {table} ADD COLUMN user_id TEXT REFERENCES users(id)")
@@ -163,6 +196,71 @@ def get_user(user_id: str) -> Optional[User]:
     row = conn.execute("SELECT id, email, created_at FROM users WHERE id = ?", (user_id,)).fetchone()
     conn.close()
     return User(id=row[0], email=row[1], created_at=row[2]) if row else None
+
+
+def get_user_by_email(email: str) -> Optional[UserCredentials]:
+    """The user behind a login name, with their password hash, for the auth layer only."""
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT id, email, created_at, password_hash FROM users WHERE email = ?", (email,)
+    ).fetchone()
+    conn.close()
+    return UserCredentials(id=row[0], email=row[1], created_at=row[2], password_hash=row[3]) if row else None
+
+
+def set_password(user_id: str, password_hash: str) -> bool:
+    """Store a password hash (never a password). Returns True if the user exists."""
+    conn = get_connection()
+    cur = conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id))
+    conn.commit()
+    updated = cur.rowcount > 0
+    conn.close()
+    return updated
+
+
+# ---------- Sessions ----------
+
+def create_session(user_id: str, token_hash: str, expires_at: str) -> int:
+    conn = get_connection()
+    cur = conn.execute(
+        "INSERT INTO sessions (user_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?)",
+        (user_id, token_hash, datetime.now().isoformat(timespec="seconds"), expires_at),
+    )
+    conn.commit()
+    new_id = cur.lastrowid
+    conn.close()
+    return new_id
+
+
+def find_session(token_hash: str) -> Optional[Session]:
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT id, user_id, expires_at, revoked_at FROM sessions WHERE token_hash = ?", (token_hash,)
+    ).fetchone()
+    conn.close()
+    return Session(id=row[0], user_id=row[1], expires_at=row[2], revoked_at=row[3]) if row else None
+
+
+def touch_session(token_hash: str, expires_at: str) -> bool:
+    """Extend a session's expiry (activity keeps a login alive)."""
+    conn = get_connection()
+    cur = conn.execute("UPDATE sessions SET expires_at = ? WHERE token_hash = ? AND revoked_at IS NULL",
+                       (expires_at, token_hash))
+    conn.commit()
+    updated = cur.rowcount > 0
+    conn.close()
+    return updated
+
+
+def revoke_session(token_hash: str) -> bool:
+    """Log a session out. Revoking an unknown or already revoked token is harmless."""
+    conn = get_connection()
+    cur = conn.execute("UPDATE sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL",
+                       (datetime.now().isoformat(timespec="seconds"), token_hash))
+    conn.commit()
+    updated = cur.rowcount > 0
+    conn.close()
+    return updated
 
 
 # ---------- Classes ----------
