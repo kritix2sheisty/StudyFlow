@@ -30,6 +30,13 @@ log = logging.getLogger("studyflow.api")
 EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 LOGIN_FAILED = "Email or password is incorrect."
 
+# The web app calls the API in-process over an ASGI transport whose
+# client host is this fixed name; no network client can present it.
+# Only then is X-Forwarded-For (the browser's address) trusted for
+# rate limiting, so limits apply per student rather than to the web
+# app as a whole.
+WEB_CLIENT_HOST = "studyflow-web"
+
 login_limiter = security.RateLimiter(limit=10, window_seconds=15 * 60)
 register_limiter = security.RateLimiter(limit=10, window_seconds=15 * 60)
 
@@ -66,7 +73,11 @@ def _credentials(body: dict) -> tuple[str, str]:
 
 
 def _client_key(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
+    host = request.client.host if request.client else "unknown"
+    if host == WEB_CLIENT_HOST:
+        forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        return f"web:{forwarded or 'unknown'}"
+    return host
 
 
 def _bearer(request: Request) -> str:

@@ -11,7 +11,17 @@ import pytest
 
 import storage
 
-ME = storage.DEFAULT_USER_ID          # the built-in student; ownership tests live in test_ownership.py
+import asyncio
+
+from api import auth as api_auth
+from StudyFlow.api_client import ApiClient
+
+ME = ""                                   # the signed-in test student's id, set by the fixture
+TOKEN = ""
+
+
+def run(coro):
+    return asyncio.run(coro)
 from models import Assignment, Priority, TimeSlot, Weekday
 from schedule_builder import DEFAULT_BREAK_MINUTES
 from study_plan import generate_study_plan
@@ -27,8 +37,19 @@ CS = Assignment(id=2, name="CS", subject="Computer Science", due_date=MONDAY + t
 
 @pytest.fixture(autouse=True)
 def temp_db(tmp_path):
+    global ME, TOKEN
     storage.set_db_path(tmp_path / "focus_test.db")
     storage.init_db()
+    api_auth.login_limiter.reset()
+    api_auth.register_limiter.reset()
+
+    async def sign_up():
+        client = ApiClient()
+        user = await client.register("student@example.com", "a long enough password")
+        token = (await client.login("student@example.com", "a long enough password"))["token"]
+        return user["id"], token
+
+    ME, TOKEN = run(sign_up())
     yield
 
 
@@ -106,8 +127,9 @@ def test_generating_a_plan_records_todays_sessions_and_invalidation_clears_them(
     storage.add_assignment(ME, Assignment(name="Math", subject="Mathematics", due_date=date.today() + timedelta(days=2),
                                       estimated_hours=2, priority=Priority.HIGH))
     state = DashboardState(_reflex_internal_init=True)
-    state.load_data()
-    state.generate_study_plan()
+    state._auth_token, state.authenticated = TOKEN, True
+    run(state.load_data())
+    run(state.generate_study_plan())
     assert [(s.label, s.subject, s.minutes) for s in state.today_sessions] == [("Math", "Mathematics", 120)]
     state._invalidate_plan("assignments")
     assert state.today_sessions == []
