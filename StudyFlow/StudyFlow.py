@@ -47,6 +47,7 @@ from storage import (
     mark_assignment_complete,
     update_assignment,
 )
+from api import create_api
 from schedule_builder import DEFAULT_BREAK_MINUTES
 from StudyFlow import assignments as forms
 from StudyFlow import focus
@@ -1692,8 +1693,11 @@ def index() -> rx.Component:
     )
 
 
+# The HTTP API (api/) answers everything under /api on this same
+# backend; every other request falls through to Reflex.
 app = rx.App(
     theme=rx.theme(accent_color="indigo", gray_color="slate", radius="large", scaling="100%"),
+    api_transformer=create_api(),
 )
 
 # ---------------------------------------------------------------------

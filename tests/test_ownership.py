@@ -154,3 +154,5 @@ def test_a_database_from_before_accounts_is_migrated_to_the_local_student(tmp_pa
     assert storage.list_assignments(other) == [] and storage.list_time_slots(other) == []
     storage.init_db()                                   # running it again is harmless
     assert len(storage.list_assignments(me)) == 1
+    columns = [r[1] for r in sqlite3.connect(old).execute("PRAGMA table_info(users)")]
+    assert "password_hash" in columns                   # the auth column arrives with the migration too
