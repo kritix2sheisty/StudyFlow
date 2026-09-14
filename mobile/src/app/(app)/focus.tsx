@@ -5,7 +5,10 @@
  * shortcut). The countdown is the session's length, started by the
  * student; pause, resume and reset; when it reaches zero, "Session
  * complete" with a 15-minute break countdown and the next session from
- * the server. Recording the session (Mark complete) is M4.
+ * the server. Mark complete records the block through the API (a
+ * session record, never the whole assignment), then Today and Progress
+ * refresh; the answer's hours done are shown. A block already recorded
+ * says so instead of offering the button.
  *
  * The clock is read, never counted: useNow re-renders, the timer value
  * gives remaining = endAt - now (see focus/timer.ts).
@@ -16,11 +19,16 @@ import { useCallback, useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { api } from "../../auth";
 import { focus, useFocus, useNow } from "../../focus";
+import { CompleteAnswer, completeSession } from "../../focus/complete";
 import {
   createTimer, formatClock, isFinished, pause, remainingMs, reset, resume, start, Timer,
 } from "../../focus/timer";
+import { progress } from "../../progress";
+import { today } from "../../today";
 import { colors } from "../../ui/AuthForm";
+import { errorMessage } from "../../ui/messages";
 
 export const BREAK_MINUTES = 15;
 
@@ -51,6 +59,10 @@ export default function FocusScreen() {
   const minutes = Math.max(1, Number(p.duration_minutes) || 25);
   const [timer, setTimer] = useState<Timer>(() => createTimer(minutes * 60_000));
   const [breakTimer, setBreakTimer] = useState<Timer | null>(null);
+  const [recorded, setRecorded] = useState<CompleteAnswer | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [recordError, setRecordError] = useState<string | null>(null);
+  const alreadyRecorded = p.completed === "true" || recorded !== null;
   const { next, nextReason } = useFocus();
 
   const active = timer.phase === "running" || breakTimer?.phase === "running";
@@ -62,6 +74,20 @@ export default function FocusScreen() {
   const loadNext = useCallback(() => { void focus.load(); }, []);
   useEffect(() => { loadNext(); }, [loadNext]);
   useEffect(() => { if (finished) loadNext(); }, [finished, loadNext]);
+
+  const markComplete = async () => {
+    if (recording || !p.date || !p.start || !p.end) return;
+    setRecording(true);
+    setRecordError(null);
+    try {
+      setRecorded(await completeSession({ api, today, progress }, { date: p.date, start: p.start, end: p.end }));
+      loadNext();
+    } catch (e) {
+      setRecordError(errorMessage(e));
+    } finally {
+      setRecording(false);
+    }
+  };
 
   const goNext = () => {
     if (!next) return;
@@ -104,9 +130,19 @@ export default function FocusScreen() {
 
         {!onBreak && finished && (
           <View style={styles.controls}>
-            <Text style={styles.done}>{minutes} minutes done.</Text>
+            {recorded ? (
+              <Text style={styles.done}>
+                Session recorded. {recorded.assignment.name}: {recorded.assignment.done_hours} of {recorded.assignment.required_hours} hours done.
+              </Text>
+            ) : alreadyRecorded ? (
+              <Text style={styles.done}>This session was already recorded.</Text>
+            ) : (
+              <Text style={styles.done}>{minutes} minutes done.</Text>
+            )}
+            {recordError ? <Text style={styles.error} accessibilityRole="alert">{recordError}</Text> : null}
+            {!alreadyRecorded && <Button label={recording ? "Recording…" : "Mark complete"} primary onPress={() => void markComplete()} />}
             <Button label={`Take a ${BREAK_MINUTES}-minute break`} onPress={() => setBreakTimer(start(createTimer(BREAK_MINUTES * 60_000), Date.now()))} />
-            {next ? <Button label={`Next: ${next.assignment}`} primary onPress={goNext} /> : null}
+            {next ? <Button label={`Next: ${next.assignment}`} primary={alreadyRecorded} onPress={goNext} /> : null}
             <Button label="Back to Today" quiet onPress={() => router.back()} />
           </View>
         )}
@@ -140,6 +176,7 @@ const styles = StyleSheet.create({
   clockBreak: { color: "#1f7a3a" },
   controls: { width: "100%", gap: 10, alignItems: "stretch" },
   done: { color: colors.muted, fontSize: 15, textAlign: "center", marginBottom: 6 },
+  error: { color: colors.danger, fontSize: 14, textAlign: "center", marginBottom: 6 },
   button: { backgroundColor: colors.field, borderRadius: 12, paddingVertical: 15, alignItems: "center" },
   buttonPrimary: { backgroundColor: colors.accent },
   buttonQuiet: { backgroundColor: "transparent" },
