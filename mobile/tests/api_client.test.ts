@@ -101,6 +101,17 @@ test("a 401 on login does not invoke onUnauthorized", async () => {
   expect(onUnauthorized).not.toHaveBeenCalled();
 });
 
+test("login and register never carry a token, so a 401 there never signs out", async () => {
+  // Found by the live check: with a stale token still on the phone, a wrong password
+  // must read as a wrong password, not as a dead session.
+  const f = fakeFetch(401, { error: "Email or password is incorrect." });
+  const { api, onUnauthorized } = client(f.impl, "still-on-the-phone");
+  await api.login("ana@example.com", "wrong").catch(() => undefined);
+  await api.register("ana@example.com", "pw").catch(() => undefined);
+  expect(f.calls.map((c) => headersOf(c).Authorization)).toEqual([undefined, undefined]);
+  expect(onUnauthorized).not.toHaveBeenCalled();
+});
+
 test("a fetch failure becomes a NetworkError naming the configured server", async () => {
   const failing = jest.fn(async () => {
     throw new TypeError("Network request failed");

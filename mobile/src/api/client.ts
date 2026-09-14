@@ -12,7 +12,8 @@
  *
  * A 401 on a call that carried a token means the session is gone
  * (revoked or expired): onUnauthorized() runs before the error is thrown.
- * A 401 on login carries no token and is just a wrong password.
+ * Login and register are sent without a token even if one is still on
+ * the phone, so a 401 there is only ever a wrong password.
  * Mirrors StudyFlow/api_client.py; later milestones add methods below
  * the marker as one-liners.
  */
@@ -45,6 +46,11 @@ export interface LoginAnswer {
   expires_at: string;
 }
 
+export interface RequestOptions {
+  /** false for calls that never need a session (login, register). */
+  auth?: boolean;
+}
+
 export interface ApiClientOptions {
   baseUrl: string;
   getToken: () => string | null;
@@ -54,7 +60,7 @@ export interface ApiClientOptions {
 }
 
 export interface ApiClient {
-  request<T = unknown>(method: string, path: string, body?: unknown): Promise<T>;
+  request<T = unknown>(method: string, path: string, body?: unknown, options?: RequestOptions): Promise<T>;
   register(email: string, password: string): Promise<{ id: string; email: string }>;
   login(email: string, password: string): Promise<LoginAnswer>;
   logout(): Promise<void>;
@@ -89,9 +95,9 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-  async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  async function request<T>(method: string, path: string, body?: unknown, options: RequestOptions = {}): Promise<T> {
     if (!baseUrl) throw new NetworkError(NO_SERVER_MESSAGE);
-    const token = getToken();
+    const token = options.auth === false ? null : getToken();
     const headers: Record<string, string> = { Accept: "application/json" };
     if (body !== undefined) headers["Content-Type"] = "application/json";
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -125,8 +131,8 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     request,
 
     // ---- Accounts
-    register: (email, password) => request("POST", "/api/auth/register", { email, password }),
-    login: (email, password) => request("POST", "/api/auth/login", { email, password }),
+    register: (email, password) => request("POST", "/api/auth/register", { email, password }, { auth: false }),
+    login: (email, password) => request("POST", "/api/auth/login", { email, password }, { auth: false }),
     logout: () => request("POST", "/api/auth/logout"),
     me: () => request("GET", "/api/me"),
 
