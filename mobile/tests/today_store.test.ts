@@ -53,7 +53,7 @@ test("a failed refresh keeps the last good view and reports the message", async 
 });
 
 test("a refresh replaces the view and clears an old message", async () => {
-  const focusToday = jest.fn(async () => { throw new NetworkError("down"); });
+  const focusToday = jest.fn<Promise<TodayAnswer>, []>(async () => { throw new NetworkError("down"); });
   const s = store(focusToday);
   await s.load();
   focusToday.mockImplementation(async () => answer([{ ...MATH, completed: true }]));
