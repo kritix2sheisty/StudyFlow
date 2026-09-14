@@ -173,6 +173,18 @@ test("focusCurrent and focusNext read the documented paths with a token", async 
   ]);
 });
 
+test("focusComplete posts the block and progress reads the documented path", async () => {
+  const f = fakeFetch(200, { recorded: true });
+  const { api } = client(f.impl, "tok");
+  await api.focusComplete({ date: "2026-09-13", start: "16:00", end: "18:00" });
+  await api.progress();
+  expect(f.calls.map((c) => [c.init.method, c.url.slice(BASE.length), headersOf(c).Authorization])).toEqual([
+    ["POST", "/api/focus/complete", "Bearer tok"],
+    ["GET", "/api/plan/progress", "Bearer tok"],
+  ]);
+  expect(JSON.parse(f.calls[0].init.body as string)).toEqual({ date: "2026-09-13", start: "16:00", end: "18:00" });
+});
+
 test("focusToday reads today's sessions with a token", async () => {
   const today = { date: "2026-09-13", sessions: [], reason: "no_plan" };
   const f = fakeFetch(200, today);

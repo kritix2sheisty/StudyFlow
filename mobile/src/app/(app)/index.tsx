@@ -115,9 +115,14 @@ export default function TodayScreen() {
           <Text style={styles.title}>Today</Text>
           {view ? <Text style={styles.date}>{dateLabel(view.date)}</Text> : null}
         </View>
-        <Pressable onPress={() => void session.signOut()} accessibilityRole="button" hitSlop={8}>
-          <Text style={styles.logout}>Log out</Text>
-        </Pressable>
+        <View style={styles.headerLinks}>
+          <Pressable onPress={() => router.push("/progress")} accessibilityRole="button" hitSlop={8}>
+            <Text style={styles.logout}>Progress</Text>
+          </Pressable>
+          <Pressable onPress={() => void session.signOut()} accessibilityRole="button" hitSlop={8}>
+            <Text style={styles.logout}>Log out</Text>
+          </Pressable>
+        </View>
       </View>
 
       {view?.kind === "sessions" ? (
@@ -149,6 +154,7 @@ const styles = StyleSheet.create({
   brand: { color: colors.accent, fontSize: 13, fontWeight: "700", letterSpacing: 1, textTransform: "uppercase" },
   title: { color: colors.ink, fontSize: 30, fontWeight: "700", marginTop: 2 },
   date: { color: colors.muted, fontSize: 15, marginTop: 2 },
+  headerLinks: { flexDirection: "row", gap: 18 },
   logout: { color: colors.accent, fontSize: 16, fontWeight: "600", paddingTop: 4 },
   progress: { color: colors.muted, fontSize: 14, paddingHorizontal: 24, paddingBottom: 8 },
   error: { color: colors.danger, fontSize: 14, paddingHorizontal: 24, paddingBottom: 8 },
