@@ -81,7 +81,8 @@ def seed_and_plan(client, headers):
 # ---------- Authentication ----------
 
 @pytest.mark.parametrize("method,path", [
-    ("GET", "/api/focus/current"), ("GET", "/api/focus/next"), ("POST", "/api/focus/complete"),
+    ("GET", "/api/focus/current"), ("GET", "/api/focus/next"), ("GET", "/api/focus/today"),
+    ("POST", "/api/focus/complete"),
 ])
 def test_every_focus_endpoint_needs_a_login(client, method, path):
     assert client.request(method, path).status_code == 401
@@ -172,6 +173,63 @@ def test_a_student_only_sees_their_own_sessions(client, ana, ben, clock):
     assert client.get("/api/focus/current", headers=ana).json()["session"]["assignment"] == "Math"
     assert client.get("/api/focus/current", headers=ben).json() == {"active": False, "session": None, "reason": "no_plan"}
     assert client.get("/api/focus/next", headers=ben).json()["session"] is None
+
+
+# ---------- Today's sessions ----------
+
+def test_today_lists_todays_sessions_with_their_completion(client, ana, clock):
+    """The phone's Today screen: every block of today, in order, saying which are done."""
+    seed_and_plan(client, ana)
+    clock(16, 30)
+    client.post("/api/focus/complete", headers=ana)                     # Math, the current block
+    r = client.get("/api/focus/today", headers=ana)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["date"] == days(0) and body["reason"] is None
+    assert [(s["assignment"], s["start"], s["end"], s["completed"]) for s in body["sessions"]] == [
+        ("Math", "16:00", "18:00", True), ("CS", "19:00", "20:00", False)]
+    math = body["sessions"][0]
+    assert (math["subject"], math["date"], math["duration_minutes"]) == ("Mathematics", days(0), 120)
+    assert isinstance(math["assignment_id"], int)
+    assert "remaining_minutes" not in math                              # the countdown belongs to the current session
+
+
+def test_today_leaves_out_other_days_and_breaks(client, ana, clock):
+    client.post("/api/study-time", json={"weekday": weekday(1), "start_hour": 16, "end_hour": 18}, headers=ana)
+    client.post("/api/assignments", json={"name": "Bio", "subject": "Biology", "due_date": days(5),
+                                          "estimated_hours": 1}, headers=ana)
+    plan = seed_and_plan(client, ana)
+    assert [d["date"] for d in plan["days"]] == [days(0), days(1)]     # Bio lands tomorrow
+    clock(9, 0)
+    body = client.get("/api/focus/today", headers=ana).json()
+    assert [s["assignment"] for s in body["sessions"]] == ["Math", "CS"]
+    assert all(s["date"] == days(0) for s in body["sessions"])
+
+
+def test_today_is_empty_when_nothing_is_planned_today(client, ana, clock):
+    client.post("/api/study-time", json={"weekday": weekday(1), "start_hour": 16, "end_hour": 18}, headers=ana)
+    client.post("/api/assignments", json={"name": "Bio", "subject": "Biology", "due_date": days(5),
+                                          "estimated_hours": 1}, headers=ana)
+    client.post("/api/plan/generate", headers=ana)
+    clock(9, 0)
+    assert client.get("/api/focus/today", headers=ana).json() == {"date": days(0), "sessions": [], "reason": None}
+
+
+def test_today_without_a_fresh_plan_says_why(client, ana, clock):
+    clock(16, 30)
+    assert client.get("/api/focus/today", headers=ana).json() == {"date": days(0), "sessions": [], "reason": "no_plan"}
+    seed_and_plan(client, ana)
+    assert len(client.get("/api/focus/today", headers=ana).json()["sessions"]) == 2
+    math = next(a for a in client.get("/api/assignments", headers=ana).json() if a["name"] == "Math")
+    client.put(f"/api/assignments/{math['id']}", json={**math, "estimated_hours": 3}, headers=ana)
+    assert client.get("/api/focus/today", headers=ana).json() == {"date": days(0), "sessions": [], "reason": "plan_stale"}
+
+
+def test_today_is_the_students_own(client, ana, ben, clock):
+    seed_and_plan(client, ana)
+    clock(16, 30)
+    assert len(client.get("/api/focus/today", headers=ana).json()["sessions"]) == 2
+    assert client.get("/api/focus/today", headers=ben).json() == {"date": days(0), "sessions": [], "reason": "no_plan"}
 
 
 # ---------- Completing a session ----------
