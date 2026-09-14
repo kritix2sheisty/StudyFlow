@@ -4,9 +4,11 @@
  * on now, past or upcoming; a header with the date and how many are
  * done; pull down to refresh, and a refresh whenever the app comes back
  * to the front so the clock is right. No plan or a stale plan sends the
- * student to the laptop, where planning lives. Tapping a session is M3.
+ * student to the laptop, where planning lives. Tapping a session opens
+ * Focus for it, with the session passed as route params.
  */
 
+import { router } from "expo-router";
 import { useCallback, useEffect } from "react";
 import {
   AppState, FlatList, Pressable, RefreshControl, StyleSheet, Text, View,
@@ -31,11 +33,23 @@ function dateLabel(iso: string): string {
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
 }
 
+function openFocus(row: TodayRow) {
+  router.push({ pathname: "/focus", params: {
+    assignment: row.assignment, subject: row.subject, date: row.date, start: row.start, end: row.end,
+    duration_minutes: String(row.duration_minutes), completed: String(row.completed),
+  } });
+}
+
 function SessionRow({ row }: { row: TodayRow }) {
   const done = row.state === "done";
   const now = row.state === "now";
   return (
-    <View style={[styles.row, now && styles.rowNow, done && styles.rowDone]} accessibilityLabel={`${row.assignment}, ${row.start} to ${row.end}, ${STATE_LABEL[row.state] || "upcoming"}`}>
+    <Pressable
+      onPress={() => openFocus(row)}
+      accessibilityRole="button"
+      accessibilityLabel={`${row.assignment}, ${row.start} to ${row.end}, ${STATE_LABEL[row.state] || "upcoming"}`}
+      style={({ pressed }) => [styles.row, now && styles.rowNow, done && styles.rowDone, pressed && styles.rowPressed]}
+    >
       <View style={styles.rowTime}>
         <Text style={[styles.time, done && styles.muted]}>{row.start}</Text>
         <Text style={[styles.timeEnd, done && styles.muted]}>{row.end}</Text>
@@ -51,7 +65,7 @@ function SessionRow({ row }: { row: TodayRow }) {
           {done ? "✓ Done" : STATE_LABEL[row.state]}
         </Text>
       ) : null}
-    </View>
+    </Pressable>
   );
 }
 
@@ -142,6 +156,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center", gap: 14, backgroundColor: colors.field, borderRadius: 14, padding: 14 },
   rowNow: { backgroundColor: "#e3f1fd", borderWidth: 2, borderColor: colors.accent },
   rowDone: { opacity: 0.75 },
+  rowPressed: { opacity: 0.6 },
   rowTime: { width: 52, alignItems: "flex-start" },
   time: { color: colors.ink, fontSize: 16, fontWeight: "700", fontVariant: ["tabular-nums"] },
   timeEnd: { color: colors.muted, fontSize: 13, fontVariant: ["tabular-nums"] },
