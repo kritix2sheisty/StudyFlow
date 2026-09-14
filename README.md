@@ -143,11 +143,51 @@ Tests live in `tests/`. A `conftest.py` at the project root puts the project
 on the import path, so `pytest` works from the project root without any
 packaging.
 
+## Mobile client (Expo)
+
+`mobile/` is a React Native app built with Expo that talks to the same API
+as the web app. Students run it on their own phone through the Expo Go app,
+on the same Wi-Fi as the laptop running StudyFlow.
+
+1. Start StudyFlow as usual (`reflex run`); the API listens on the backend
+   port on every interface.
+2. Find the laptop's LAN address (`ipconfig`, the IPv4 line).
+3. Set it up once:
+
+   ```
+   cd mobile
+   npm install
+   copy .env.example .env      # then edit EXPO_PUBLIC_API_URL to http://<LAN IP>:<backend port>
+   ```
+
+4. Run it: `npx expo start`, then scan the QR code with Expo Go (Android)
+   or the camera app (iPhone). The sign-in screen shows the server address
+   it is using at the bottom.
+5. Tests: `npm test`. Type check: `npm run typecheck`. Health: `npm run doctor`.
+
+Notes:
+
+* `EXPO_PUBLIC_API_URL` is baked in at bundle time; after editing `.env`
+  restart with `npx expo start -c`.
+* Windows asks once whether Node may accept connections; allow it on private
+  networks. The Wi-Fi profile on the laptop must be *Private*, and Python
+  (the API) needs the same permission.
+* On Wi-Fi that isolates devices (many school and guest networks), phones
+  cannot reach the laptop at all. Turn on the laptop's Mobile hotspot,
+  join it from the phone, and use the hotspot address (usually
+  `192.168.137.1`) in `.env`. `npx expo start --tunnel` only tunnels the app
+  bundle, not the API.
+* An Android emulator reaches the laptop at `10.0.2.2`, not the LAN IP.
+* Expo Go allows plain `http://` to the laptop. A standalone build later will
+  need cleartext traffic enabled on Android and an App Transport Security
+  exception on iOS.
+
 ## Technologies
 
 * Python
 * SQLite
 * Reflex *(planned/under development)*
+* React Native with Expo *(mobile client, in `mobile/`)*
 * Algorithms and data structures
 * AI/LLM integration *(future phase)*
 
