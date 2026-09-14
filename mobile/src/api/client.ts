@@ -49,6 +49,9 @@ export interface LoginAnswer {
 export type TodayAnswer = import("../today/view").TodayAnswer;
 export type CurrentAnswer = import("../focus/store").CurrentAnswer;
 export type NextAnswer = import("../focus/store").NextAnswer;
+export type Block = import("../focus/complete").Block;
+export type CompleteAnswer = import("../focus/complete").CompleteAnswer;
+export type ProgressAnswer = import("../progress/store").ProgressAnswer;
 
 export interface RequestOptions {
   /** false for calls that never need a session (login, register). */
@@ -72,6 +75,8 @@ export interface ApiClient {
   focusToday(): Promise<TodayAnswer>;
   focusCurrent(): Promise<CurrentAnswer>;
   focusNext(): Promise<NextAnswer>;
+  focusComplete(block: Block): Promise<CompleteAnswer>;
+  progress(): Promise<ProgressAnswer>;
 }
 
 export const DEFAULT_TIMEOUT_MS = 15_000;
@@ -147,5 +152,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     focusToday: () => request("GET", "/api/focus/today"),
     focusCurrent: () => request("GET", "/api/focus/current"),
     focusNext: () => request("GET", "/api/focus/next"),
+    focusComplete: (block) => request("POST", "/api/focus/complete", block),
+    progress: () => request("GET", "/api/plan/progress"),
   };
 }
