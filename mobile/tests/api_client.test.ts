@@ -162,6 +162,17 @@ test("the auth methods hit the documented paths and verbs", async () => {
   expect(f.calls[2].init.body).toBeUndefined();
 });
 
+test("focusCurrent and focusNext read the documented paths with a token", async () => {
+  const f = fakeFetch(200, { active: false, session: null, reason: "nothing_now" });
+  const { api } = client(f.impl, "tok");
+  await api.focusCurrent();
+  await api.focusNext();
+  expect(f.calls.map((c) => [c.init.method, c.url.slice(BASE.length), headersOf(c).Authorization])).toEqual([
+    ["GET", "/api/focus/current", "Bearer tok"],
+    ["GET", "/api/focus/next", "Bearer tok"],
+  ]);
+});
+
 test("focusToday reads today's sessions with a token", async () => {
   const today = { date: "2026-09-13", sessions: [], reason: "no_plan" };
   const f = fakeFetch(200, today);
