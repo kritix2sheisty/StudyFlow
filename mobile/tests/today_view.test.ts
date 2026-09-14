@@ -71,3 +71,12 @@ test("rows keep the session fields the Focus screen will need", () => {
     start: "16:00", end: "18:00", duration_minutes: 120, completed: false, state: "upcoming",
   });
 });
+
+test("clock12 shows the API's 24-hour times the way students read them", () => {
+  const { clock12 } = require("../src/today/view");
+  expect(clock12("16:00")).toBe("4:00");
+  expect(clock12("09:30")).toBe("9:30");
+  expect(clock12("12:00")).toBe("12:00");
+  expect(clock12("00:15")).toBe("12:15");
+  expect(clock12("23:59")).toBe("11:59");
+});

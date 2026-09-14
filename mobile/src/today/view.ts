@@ -52,6 +52,13 @@ export function minuteOf(clock: string): number {
   return h * 60 + m;
 }
 
+/** "16:00" from the API shown as "4:00", the way students read a timetable. */
+export function clock12(clock: string): string {
+  const [h, m] = clock.split(":").map(Number);
+  const hour = h % 12 === 0 ? 12 : h % 12;
+  return `${hour}:${m.toString().padStart(2, "0")}`;
+}
+
 /** Minutes since midnight on the phone's wall clock. Never counted, always read. */
 export function nowMinute(now: Date = new Date()): number {
   return now.getHours() * 60 + now.getMinutes();

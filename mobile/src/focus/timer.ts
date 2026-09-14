@@ -60,10 +60,13 @@ export function isFinished(t: Timer, now: number): boolean {
   return t.phase !== "idle" && remainingMs(t, now) === 0;
 }
 
-/** "mm:ss" for the clock face; hours fold into minutes (125:00 is fine). */
+/** The clock face: "1:42:18" past an hour, "25:00" below it; a partial second still shows. */
 export function formatClock(ms: number): string {
   const total = Math.ceil(ms / 1000);
-  const m = Math.floor(total / 60);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
+  const mm = m.toString().padStart(2, "0");
+  const ss = s.toString().padStart(2, "0");
+  return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
 }
