@@ -78,3 +78,13 @@ test("start, pause and resume are no-ops in the wrong phase", () => {
   expect(start(running, T0 + MIN)).toBe(running);
   expect(resume(running, T0 + MIN)).toBe(running);
 });
+
+test("formatClock shows h:mm:ss past an hour and m:ss below it, as the mentor sketched", () => {
+  const { formatClock } = require("../src/focus/timer");
+  expect(formatClock(120 * MIN)).toBe("2:00:00");
+  expect(formatClock(102 * MIN + 18_000)).toBe("1:42:18");
+  expect(formatClock(25 * MIN)).toBe("25:00");
+  expect(formatClock(59_000)).toBe("0:59");
+  expect(formatClock(0)).toBe("0:00");
+  expect(formatClock(1)).toBe("0:01");                                 // a partial second still counts down, never shows 0:00 early
+});

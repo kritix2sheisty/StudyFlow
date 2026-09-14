@@ -18,14 +18,14 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { session } from "../../auth";
 import { useSession } from "../../auth/useSession";
 import { today, useToday } from "../../today";
-import type { TodayRow, TodayView } from "../../today/view";
+import { clock12, TodayRow, TodayView } from "../../today/view";
 import { colors } from "../../ui/AuthForm";
 
 const STATE_LABEL: Record<TodayRow["state"], string> = {
   done: "Done",
   now: "Now",
   past: "Missed",
-  upcoming: "",
+  upcoming: "Not started",
 };
 
 function dateLabel(iso: string): string {
@@ -47,12 +47,12 @@ function SessionRow({ row }: { row: TodayRow }) {
     <Pressable
       onPress={() => openFocus(row)}
       accessibilityRole="button"
-      accessibilityLabel={`${row.assignment}, ${row.start} to ${row.end}, ${STATE_LABEL[row.state] || "upcoming"}`}
+      accessibilityLabel={`${row.assignment}, ${clock12(row.start)} to ${clock12(row.end)}, ${STATE_LABEL[row.state]}`}
       style={({ pressed }) => [styles.row, now && styles.rowNow, done && styles.rowDone, pressed && styles.rowPressed]}
     >
       <View style={styles.rowTime}>
-        <Text style={[styles.time, done && styles.muted]}>{row.start}</Text>
-        <Text style={[styles.timeEnd, done && styles.muted]}>{row.end}</Text>
+        <Text style={[styles.time, done && styles.muted]}>{clock12(row.start)}</Text>
+        <Text style={[styles.timeEnd, done && styles.muted]}>{clock12(row.end)}</Text>
       </View>
       <View style={styles.rowBody}>
         <Text style={[styles.assignment, done && styles.strike]} numberOfLines={2}>{row.assignment}</Text>
@@ -60,11 +60,9 @@ function SessionRow({ row }: { row: TodayRow }) {
           {row.subject ? `${row.subject} · ` : ""}{row.duration_minutes} min
         </Text>
       </View>
-      {STATE_LABEL[row.state] ? (
-        <Text style={[styles.badge, now && styles.badgeNow, done && styles.badgeDone, row.state === "past" && styles.badgePast]}>
-          {done ? "✓ Done" : STATE_LABEL[row.state]}
-        </Text>
-      ) : null}
+      <Text style={[styles.badge, now && styles.badgeNow, done && styles.badgeDone, row.state === "past" && styles.badgePast, row.state === "upcoming" && styles.badgeUpcoming]}>
+        {done ? "✓ Done" : row.state === "upcoming" ? "○ Not started" : STATE_LABEL[row.state]}
+      </Text>
     </Pressable>
   );
 }
@@ -175,6 +173,7 @@ const styles = StyleSheet.create({
   badgeNow: { color: "#fff", backgroundColor: colors.accent },
   badgeDone: { color: "#1f7a3a", backgroundColor: "#dff5e5" },
   badgePast: { color: "#8a5a00", backgroundColor: "#fff1cc" },
+  badgeUpcoming: { color: colors.muted, backgroundColor: "transparent", fontWeight: "500" },
   notice: { backgroundColor: colors.field, borderRadius: 14, padding: 18, gap: 6, marginTop: 8 },
   noticeTitle: { color: colors.ink, fontSize: 17, fontWeight: "600" },
   noticeBody: { color: colors.muted, fontSize: 14, lineHeight: 20 },

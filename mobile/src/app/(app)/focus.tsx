@@ -27,6 +27,7 @@ import {
 } from "../../focus/timer";
 import { progress } from "../../progress";
 import { today } from "../../today";
+import { clock12 } from "../../today/view";
 import { colors } from "../../ui/AuthForm";
 import { errorMessage } from "../../ui/messages";
 
@@ -112,7 +113,7 @@ export default function FocusScreen() {
       <View style={styles.center}>
         <Text style={styles.subject}>{p.subject || " "}</Text>
         <Text style={styles.assignment} numberOfLines={3}>{p.assignment ?? "Study session"}</Text>
-        <Text style={styles.when}>{p.start && p.end ? `${p.start} – ${p.end} · ${minutes} min` : `${minutes} min`}</Text>
+        <Text style={styles.when}>{p.start && p.end ? `${clock12(p.start)} – ${clock12(p.end)} · ${minutes} min` : `${minutes} min`}</Text>
 
         <Text style={styles.phase}>{label}</Text>
         <Text style={[styles.clock, onBreak && styles.clockBreak]} accessibilityLabel={`${formatClock(remaining)} remaining`}>
@@ -137,7 +138,7 @@ export default function FocusScreen() {
             ) : alreadyRecorded ? (
               <Text style={styles.done}>This session was already recorded.</Text>
             ) : (
-              <Text style={styles.done}>{minutes} minutes done.</Text>
+              <Text style={styles.done}>{minutes} minutes completed.</Text>
             )}
             {recordError ? <Text style={styles.error} accessibilityRole="alert">{recordError}</Text> : null}
             {!alreadyRecorded && <Button label={recording ? "Recording…" : "Mark complete"} primary onPress={() => void markComplete()} />}
@@ -157,7 +158,7 @@ export default function FocusScreen() {
       </View>
 
       <Text style={styles.next}>
-        {next ? `Up next: ${next.assignment} at ${next.start}` : nextReason === "nothing_next" ? "Nothing after this. Nice." : nextReason === "plan_stale" ? "Your plan needs regenerating on your laptop." : " "}
+        {next ? `Up next: ${next.assignment} at ${clock12(next.start)}` : nextReason === "nothing_next" ? "Nothing after this. Nice." : nextReason === "plan_stale" ? "Your plan needs regenerating on your laptop." : " "}
       </Text>
     </SafeAreaView>
   );
