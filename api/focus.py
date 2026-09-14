@@ -6,6 +6,7 @@ stays on the client; the server only knows the blocks and the clock.
 
     GET  /api/focus/current   -> {"active": bool, "session": {...}|null, "reason": ...}
     GET  /api/focus/next      -> {"session": {...}|null, "reason": ...}
+    GET  /api/focus/today     -> {"date": "YYYY-MM-DD", "sessions": [{...}], "reason": ...}
     POST /api/focus/complete  -> {"recorded", "already_recorded", "session", "assignment"}
 
 Sessions come from the student's stored plan (api/plan.py), and only
@@ -127,6 +128,19 @@ async def next_session(request: Request) -> Response:
     if s is None:
         return JSONResponse({"session": None, "reason": "nothing_next"})
     return JSONResponse({"session": _public(s, False), "reason": None})
+
+
+async def today(request: Request) -> Response:
+    """Every study block planned for today, in time order, each saying whether it is done."""
+    user = current_user(request)
+    now = _now()
+    day = now.date().isoformat()
+    reason, sessions = _sessions_for(user.id)
+    if reason:
+        return JSONResponse({"date": day, "sessions": [], "reason": reason})
+    done = _done_keys(user.id)
+    todays = [_public(s, _is_done(s, done)) for s in sessions if s["date"] == day]
+    return JSONResponse({"date": day, "sessions": todays, "reason": None})
 
 
 def _requested_block(request_body: Optional[dict], sessions: list[dict], now: datetime) -> dict:
