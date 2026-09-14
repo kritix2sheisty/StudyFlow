@@ -71,7 +71,7 @@ test("throws ApiError with the API's status and message for a JSON error", async
 
 test("throws ApiError with the plain text for a non-JSON error body", async () => {
   const f = fakeFetch(404, "Not Found");
-  const err = await client(f.impl, "tok").api.request("GET", "/api/nothing").catch((e) => e);
+  const err = (await client(f.impl, "tok").api.request("GET", "/api/nothing").catch((e) => e)) as ApiError;
   expect(err).toBeInstanceOf(ApiError);
   expect(err.status).toBe(404);
   expect(err.message).toBe("Not Found");
