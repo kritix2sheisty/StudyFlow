@@ -47,6 +47,8 @@ export interface LoginAnswer {
 }
 
 export type TodayAnswer = import("../today/view").TodayAnswer;
+export type CurrentAnswer = import("../focus/store").CurrentAnswer;
+export type NextAnswer = import("../focus/store").NextAnswer;
 
 export interface RequestOptions {
   /** false for calls that never need a session (login, register). */
@@ -68,6 +70,8 @@ export interface ApiClient {
   logout(): Promise<void>;
   me(): Promise<User>;
   focusToday(): Promise<TodayAnswer>;
+  focusCurrent(): Promise<CurrentAnswer>;
+  focusNext(): Promise<NextAnswer>;
 }
 
 export const DEFAULT_TIMEOUT_MS = 15_000;
@@ -141,5 +145,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
 
     // ---- Plan, progress, focus
     focusToday: () => request("GET", "/api/focus/today"),
+    focusCurrent: () => request("GET", "/api/focus/current"),
+    focusNext: () => request("GET", "/api/focus/next"),
   };
 }
