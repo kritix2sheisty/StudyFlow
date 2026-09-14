@@ -46,6 +46,8 @@ export interface LoginAnswer {
   expires_at: string;
 }
 
+export type TodayAnswer = import("../today/view").TodayAnswer;
+
 export interface RequestOptions {
   /** false for calls that never need a session (login, register). */
   auth?: boolean;
@@ -65,6 +67,7 @@ export interface ApiClient {
   login(email: string, password: string): Promise<LoginAnswer>;
   logout(): Promise<void>;
   me(): Promise<User>;
+  focusToday(): Promise<TodayAnswer>;
 }
 
 export const DEFAULT_TIMEOUT_MS = 15_000;
@@ -136,6 +139,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     logout: () => request("POST", "/api/auth/logout"),
     me: () => request("GET", "/api/me"),
 
-    // ---- Plan, progress, focus (M2 onward)
+    // ---- Plan, progress, focus
+    focusToday: () => request("GET", "/api/focus/today"),
   };
 }
