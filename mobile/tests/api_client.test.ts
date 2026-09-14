@@ -161,3 +161,12 @@ test("the auth methods hit the documented paths and verbs", async () => {
   ]);
   expect(f.calls[2].init.body).toBeUndefined();
 });
+
+test("focusToday reads today's sessions with a token", async () => {
+  const today = { date: "2026-09-13", sessions: [], reason: "no_plan" };
+  const f = fakeFetch(200, today);
+  const { api } = client(f.impl, "tok");
+  await expect(api.focusToday()).resolves.toEqual(today);
+  expect([f.calls[0].init.method, f.calls[0].url]).toEqual(["GET", `${BASE}/api/focus/today`]);
+  expect(headersOf(f.calls[0]).Authorization).toBe("Bearer tok");
+});
