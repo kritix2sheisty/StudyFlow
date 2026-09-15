@@ -6,7 +6,8 @@
  * or still to come. Pure: the clock is a minute of the day passed in.
  */
 
-import { buildTodayView, minuteOf, nowMinute, TodayAnswer } from "../src/today/view";
+import { todayLines } from "../src/history/view";
+import { buildTodayView, minuteOf, nowMinute, TodayAnswer, todayTotals } from "../src/today/view";
 
 const session = (start: string, end: string, completed = false, assignment = "Math") => ({
   assignment_id: 1, assignment, subject: "Mathematics", date: "2026-09-13", start, end,
@@ -27,12 +28,12 @@ test("nowMinute reads the wall clock, not a counter", () => {
 });
 
 test("no plan and a stale plan are their own kinds with nothing to list", () => {
-  expect(buildTodayView(day([], "no_plan"), 600)).toEqual({ kind: "no_plan", date: "2026-09-13", rows: [], done: 0, total: 0 });
+  expect(buildTodayView(day([], "no_plan"), 600)).toMatchObject({ kind: "no_plan", date: "2026-09-13", rows: [], done: 0, total: 0, now: null, next: null });
   expect(buildTodayView(day([], "plan_stale"), 600).kind).toBe("plan_stale");
 });
 
 test("a fresh plan with nothing today is empty", () => {
-  expect(buildTodayView(day([]), 600)).toEqual({ kind: "empty", date: "2026-09-13", rows: [], done: 0, total: 0 });
+  expect(buildTodayView(day([]), 600)).toMatchObject({ kind: "empty", date: "2026-09-13", rows: [], done: 0, total: 0, now: null, next: null });
 });
 
 test("each session is done, now, past or upcoming by the clock", () => {
@@ -40,11 +41,11 @@ test("each session is done, now, past or upcoming by the clock", () => {
     session("09:00", "10:00", true),            // done
     session("11:00", "12:00"),                  // past, not done
     session("16:00", "18:00", false, "CS"),     // on now
-    session("19:00", "20:00", false, "Bio"),    // upcoming
+    session("19:00", "20:00", false, "Bio"),    // the first still to come: next
   ]), 16 * 60 + 47);
   expect(view.kind).toBe("sessions");
   expect(view.rows.map((r) => [r.assignment, r.state])).toEqual([
-    ["Math", "done"], ["Math", "past"], ["CS", "now"], ["Bio", "upcoming"],
+    ["Math", "done"], ["Math", "past"], ["CS", "now"], ["Bio", "next"],
   ]);
   expect(view.done).toBe(1);
   expect(view.total).toBe(4);
@@ -58,7 +59,7 @@ test("a completed session is done even while it is on now", () => {
 
 test("the end minute is not inside the session", () => {
   const rows = (m: number) => buildTodayView(day([session("16:00", "18:00")]), m).rows[0].state;
-  expect(rows(16 * 60 - 1)).toBe("upcoming");
+  expect(rows(16 * 60 - 1)).toBe("next");                              // the only session still to come
   expect(rows(16 * 60)).toBe("now");
   expect(rows(18 * 60 - 1)).toBe("now");
   expect(rows(18 * 60)).toBe("past");
@@ -68,7 +69,7 @@ test("rows keep the session fields the Focus screen will need", () => {
   const view = buildTodayView(day([session("16:00", "18:00")]), 600);
   expect(view.rows[0]).toMatchObject({
     assignment_id: 1, assignment: "Math", subject: "Mathematics", date: "2026-09-13",
-    start: "16:00", end: "18:00", duration_minutes: 120, completed: false, state: "upcoming",
+    start: "16:00", end: "18:00", duration_minutes: 120, completed: false, state: "next",
   });
 });
 
@@ -82,7 +83,7 @@ test("clock12 shows the API's 24-hour times the way students read them", () => {
 });
 
 test("the first upcoming session is marked next, the rest stay upcoming", () => {
-  const { buildTodayView: build } = require("../src/today/view");
+  const build = buildTodayView;
   const view = build(day([
     session("09:00", "10:00", true),
     session("16:00", "18:00", false, "CS"),
@@ -97,7 +98,7 @@ test("the first upcoming session is marked next, the rest stay upcoming", () => 
 });
 
 test("now and next are exposed together, and next skips done sessions", () => {
-  const { buildTodayView: build } = require("../src/today/view");
+  const build = buildTodayView;
   const view = build(day([
     session("16:00", "18:00", false, "CS"),
     session("19:00", "20:00", true, "Bio"),
@@ -109,7 +110,7 @@ test("now and next are exposed together, and next skips done sessions", () => {
 });
 
 test("the day's goal is done minutes against all planned minutes", () => {
-  const { buildTodayView: build } = require("../src/today/view");
+  const build = buildTodayView;
   const view = build(day([
     session("09:00", "10:00", true),              // 60 done
     session("16:00", "18:00", false, "CS"),       // 120
@@ -120,8 +121,7 @@ test("the day's goal is done minutes against all planned minutes", () => {
 });
 
 test("todayTotals feeds the motivation sentences from the rows alone", () => {
-  const { buildTodayView: build, todayTotals } = require("../src/today/view");
-  const { todayLines } = require("../src/history/view");
+  const build = buildTodayView;
   const view = build(day([
     session("09:00", "10:00", true),
     session("10:15", "11:00", true, "CS"),
