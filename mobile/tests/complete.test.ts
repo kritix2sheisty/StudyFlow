@@ -1,8 +1,8 @@
 /**
  * tests/complete.test.ts
  * Marking a session complete: one call to the API for the block the
- * student just did, then Today and Progress refresh so the tick, the
- * count and the hours are right everywhere. A refusal (stale plan,
+ * student just did, then Today, Progress and History refresh so the
+ * tick, the count and the hours are right everywhere. A refusal (stale plan,
  * unknown block) is rethrown untouched and nothing refreshes.
  */
 
@@ -19,15 +19,17 @@ const ANSWER = {
 function deps(focusComplete = jest.fn(async () => ANSWER)) {
   const today = { load: jest.fn(async () => undefined) };
   const progress = { load: jest.fn(async () => undefined) };
-  return { api: { focusComplete }, today, progress };
+  const history = { load: jest.fn(async () => undefined) };
+  return { api: { focusComplete }, today, progress, history };
 }
 
-test("records the block, then refreshes Today and Progress, and returns the answer", async () => {
+test("records the block, then refreshes Today, Progress and History, and returns the answer", async () => {
   const d = deps();
   const answer = await completeSession(d, BLOCK);
   expect(d.api.focusComplete).toHaveBeenCalledWith(BLOCK);
   expect(d.today.load).toHaveBeenCalledTimes(1);
   expect(d.progress.load).toHaveBeenCalledTimes(1);
+  expect(d.history.load).toHaveBeenCalledTimes(1);
   expect(answer).toEqual(ANSWER);
 });
 
@@ -43,6 +45,7 @@ test("a refusal is rethrown untouched and nothing refreshes", async () => {
   await expect(completeSession(d, BLOCK)).rejects.toMatchObject({ status: 409 });
   expect(d.today.load).not.toHaveBeenCalled();
   expect(d.progress.load).not.toHaveBeenCalled();
+  expect(d.history.load).not.toHaveBeenCalled();
 });
 
 test("a failed refresh does not undo the recording", async () => {

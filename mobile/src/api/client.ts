@@ -52,6 +52,7 @@ export type NextAnswer = import("../focus/store").NextAnswer;
 export type Block = import("../focus/complete").Block;
 export type CompleteAnswer = import("../focus/complete").CompleteAnswer;
 export type ProgressAnswer = import("../progress/store").ProgressAnswer;
+export type HistoryAnswer = import("../history/view").HistoryAnswer;
 
 export interface RequestOptions {
   /** false for calls that never need a session (login, register). */
@@ -77,6 +78,7 @@ export interface ApiClient {
   focusNext(): Promise<NextAnswer>;
   focusComplete(block: Block): Promise<CompleteAnswer>;
   progress(): Promise<ProgressAnswer>;
+  history(days?: number): Promise<HistoryAnswer>;
 }
 
 export const DEFAULT_TIMEOUT_MS = 15_000;
@@ -154,5 +156,6 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     focusNext: () => request("GET", "/api/focus/next"),
     focusComplete: (block) => request("POST", "/api/focus/complete", block),
     progress: () => request("GET", "/api/plan/progress"),
+    history: (days = 7) => request("GET", `/api/focus/history?days=${days}`),
   };
 }
