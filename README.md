@@ -204,8 +204,12 @@ for example):
 2. Add a volume mounted at `/data`.
 3. Set `STUDYFLOW_DB_PATH=/data/studyflow.db` (already the image default)
    and let the host set `PORT`.
-4. Open `https://<your-app-host>/api/health`; it answers `{"status":"ok"}`.
-5. Put that address in the phone app's build (below). Keep a copy of the
+4. Set `TZ` to the students' timezone (the image defaults to
+   `America/La_Paz`). Hosts run in UTC, and every "today" in StudyFlow
+   comes from the server clock, so without it a plan made on Monday
+   evening is already Tuesday's.
+5. Open `https://<your-app-host>/api/health`; it answers `{"status":"ok"}`.
+6. Put that address in the phone app's build (below). Keep a copy of the
    database now and then: it is one small file at `/data/studyflow.db`.
 
 Hosts without a persistent disk (Render's free tier, for example) lose the
