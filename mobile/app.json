@@ -18,7 +18,8 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.kritix2sheisty.studyflow"
     },
     "plugins": [
       "expo-router",
@@ -38,6 +39,15 @@
     },
     "runtimeVersion": {
       "policy": "sdkVersion"
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "f9642981-fb4c-4c40-aaaa-f4666a76dc93"
+      }
+    },
+    "updates": {
+      "url": "https://u.expo.dev/f9642981-fb4c-4c40-aaaa-f4666a76dc93"
     }
   }
 }
