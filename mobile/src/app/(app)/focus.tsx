@@ -25,6 +25,7 @@ import { CompleteAnswer, completeSession } from "../../focus/complete";
 import {
   createTimer, formatClock, isFinished, pause, remainingMs, reset, resume, start, Timer,
 } from "../../focus/timer";
+import { history } from "../../history";
 import { progress } from "../../progress";
 import { today } from "../../today";
 import { clock12 } from "../../today/view";
@@ -81,7 +82,7 @@ export default function FocusScreen() {
     setRecording(true);
     setRecordError(null);
     try {
-      setRecorded(await completeSession({ api, today, progress }, { date: p.date, start: p.start, end: p.end }));
+      setRecorded(await completeSession({ api, today, progress, history }, { date: p.date, start: p.start, end: p.end }));
       loadNext();
     } catch (e) {
       setRecordError(errorMessage(e));
