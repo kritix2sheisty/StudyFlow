@@ -12,7 +12,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONUTF8=1 \
     STUDYFLOW_DB_PATH=/data/studyflow.db \
-    PORT=8010
+    PORT=8010 \
+    TZ=America/La_Paz
+# TZ: every "today" (the plan, Today, Focus, streaks) comes from the server
+# clock, and a host runs in UTC, where the students' Monday evening is
+# already Tuesday. Set TZ to the students' zone; a host variable overrides.
 
 WORKDIR /app
 
