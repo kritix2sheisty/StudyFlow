@@ -10,20 +10,24 @@
  * refresh; the answer's hours done are shown. A block already recorded
  * says so instead of offering the button.
  *
+ * v1.2 Focus UX: a progress bar under the clock (elapsed over length),
+ * an explicit End session that asks first and records nothing, and an
+ * automatic move to the next session when the break ends.
+ *
  * The clock is read, never counted: useNow re-renders, the timer value
  * gives remaining = endAt - now (see focus/timer.ts).
  */
 
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { api } from "../../auth";
 import { focus, useFocus, useNow } from "../../focus";
 import { CompleteAnswer, completeSession } from "../../focus/complete";
 import {
-  createTimer, formatClock, isFinished, pause, remainingMs, reset, resume, start, Timer,
+  createTimer, formatClock, isFinished, pause, progressPercent, remainingMs, reset, resume, start, Timer,
 } from "../../focus/timer";
 import { history } from "../../history";
 import { progress } from "../../progress";
@@ -91,12 +95,26 @@ export default function FocusScreen() {
     }
   };
 
-  const goNext = () => {
+  const goNext = useCallback(() => {
     if (!next) return;
     router.replace({ pathname: "/focus", params: {
       assignment: next.assignment, subject: next.subject, date: next.date, start: next.start, end: next.end,
       duration_minutes: String(next.duration_minutes), completed: String(next.completed),
     } });
+  }, [next]);
+
+  // The break is over: move on to the next session by itself, or back to Today.
+  useEffect(() => {
+    if (!breakOver) return;
+    if (next) goNext();
+    else router.back();
+  }, [breakOver, next, goNext]);
+
+  const endSession = () => {
+    Alert.alert("End this session?", "It will not be recorded. You can start it again from Today.", [
+      { text: "Keep going", style: "cancel" },
+      { text: "End session", style: "destructive", onPress: () => router.back() },
+    ]);
   };
 
   const shown = onBreak ? breakTimer! : timer;
@@ -120,6 +138,9 @@ export default function FocusScreen() {
         <Text style={[styles.clock, onBreak && styles.clockBreak]} accessibilityLabel={`${formatClock(remaining)} remaining`}>
           {formatClock(remaining)}
         </Text>
+        <View style={styles.progress} accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: progressPercent(shown, now) }}>
+          <View style={[styles.progressFill, onBreak && styles.progressBreak, { width: `${progressPercent(shown, now)}%` }]} />
+        </View>
 
         {!onBreak && !finished && (
           <View style={styles.controls}>
@@ -127,6 +148,7 @@ export default function FocusScreen() {
             {timer.phase === "running" && <Button label="Pause" onPress={() => setTimer(pause(timer, Date.now()))} />}
             {timer.phase === "paused" && <Button label="Resume" primary onPress={() => setTimer(resume(timer, Date.now()))} />}
             {timer.phase !== "idle" && <Button label="Reset" quiet onPress={() => setTimer(reset(timer))} />}
+            <Button label={timer.phase === "idle" ? "Back to Today" : "End session"} quiet onPress={timer.phase === "idle" ? () => router.back() : endSession} />
           </View>
         )}
 
@@ -151,9 +173,9 @@ export default function FocusScreen() {
 
         {onBreak && (
           <View style={styles.controls}>
-            {breakOver
-              ? (next ? <Button label={`Next: ${next.assignment}`} primary onPress={goNext} /> : <Button label="Back to Today" primary onPress={() => router.back()} />)
-              : <Button label="End break" quiet onPress={() => setBreakTimer(null)} />}
+            <Text style={styles.done}>{next ? `Up next: ${next.assignment}. It opens when the break ends.` : "Nothing after this. Today opens when the break ends."}</Text>
+            {next ? <Button label={`Skip break, start ${next.assignment}`} onPress={goNext} /> : null}
+            <Button label="End break" quiet onPress={() => setBreakTimer(null)} />
           </View>
         )}
       </View>
@@ -174,8 +196,11 @@ const styles = StyleSheet.create({
   assignment: { color: colors.ink, fontSize: 24, fontWeight: "700", textAlign: "center" },
   when: { color: colors.muted, fontSize: 14, marginBottom: 28 },
   phase: { color: colors.muted, fontSize: 14, textTransform: "uppercase", letterSpacing: 2 },
-  clock: { color: colors.ink, fontSize: 84, fontWeight: "200", fontVariant: ["tabular-nums"], letterSpacing: -2, marginBottom: 24 },
+  clock: { color: colors.ink, fontSize: 84, fontWeight: "200", fontVariant: ["tabular-nums"], letterSpacing: -2, marginBottom: 10 },
   clockBreak: { color: "#1f7a3a" },
+  progress: { width: "100%", height: 6, borderRadius: 999, backgroundColor: "#e5e5ea", overflow: "hidden", marginBottom: 20 },
+  progressFill: { height: "100%", borderRadius: 999, backgroundColor: colors.accent },
+  progressBreak: { backgroundColor: "#1f7a3a" },
   controls: { width: "100%", gap: 10, alignItems: "stretch" },
   done: { color: colors.muted, fontSize: 15, textAlign: "center", marginBottom: 6 },
   error: { color: colors.danger, fontSize: 14, textAlign: "center", marginBottom: 6 },

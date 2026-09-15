@@ -60,6 +60,13 @@ export function isFinished(t: Timer, now: number): boolean {
   return t.phase !== "idle" && remainingMs(t, now) === 0;
 }
 
+/** How far through the session, 0 to 100, from the same clock reads as remaining. */
+export function progressPercent(t: Timer, now: number): number {
+  if (t.durationMs <= 0) return 0;
+  const elapsed = t.durationMs - remainingMs(t, now);
+  return Math.min(100, Math.max(0, Math.round((100 * elapsed) / t.durationMs)));
+}
+
 /** The clock face: "1:42:18" past an hour, "25:00" below it; a partial second still shows. */
 export function formatClock(ms: number): string {
   const total = Math.ceil(ms / 1000);
