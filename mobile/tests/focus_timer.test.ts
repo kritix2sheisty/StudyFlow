@@ -88,3 +88,16 @@ test("formatClock shows h:mm:ss past an hour and m:ss below it, as the mentor sk
   expect(formatClock(0)).toBe("0:00");
   expect(formatClock(1)).toBe("0:01");                                 // a partial second still counts down, never shows 0:00 early
 });
+
+test("progressPercent is elapsed over length, read from the clock like everything else", () => {
+  const { progressPercent } = require("../src/focus/timer");
+  const idle = createTimer(20 * MIN);
+  expect(progressPercent(idle, T0)).toBe(0);
+  const running = start(idle, T0);
+  expect(progressPercent(running, T0)).toBe(0);
+  expect(progressPercent(running, T0 + 5 * MIN)).toBe(25);
+  expect(progressPercent(running, T0 + 10 * MIN)).toBe(50);
+  const paused = pause(running, T0 + 15 * MIN);
+  expect(progressPercent(paused, T0 + 60 * MIN)).toBe(75);            // holds while paused
+  expect(progressPercent(running, T0 + 25 * MIN)).toBe(100);           // never past the end
+});
