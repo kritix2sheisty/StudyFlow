@@ -185,6 +185,17 @@ test("focusComplete posts the block and progress reads the documented path", asy
   expect(JSON.parse(f.calls[0].init.body as string)).toEqual({ date: "2026-09-13", start: "16:00", end: "18:00" });
 });
 
+test("history reads the documented path with the days query and a token", async () => {
+  const f = fakeFetch(200, { days: 30, sessions: [] });
+  const { api } = client(f.impl, "tok");
+  await api.history(30);
+  await api.history();
+  expect(f.calls.map((c) => [c.init.method, c.url.slice(BASE.length), headersOf(c).Authorization])).toEqual([
+    ["GET", "/api/focus/history?days=30", "Bearer tok"],
+    ["GET", "/api/focus/history?days=7", "Bearer tok"],
+  ]);
+});
+
 test("focusToday reads today's sessions with a token", async () => {
   const today = { date: "2026-09-13", sessions: [], reason: "no_plan" };
   const f = fakeFetch(200, today);
