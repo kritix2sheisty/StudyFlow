@@ -25,8 +25,9 @@ COPY api_server.py storage.py models.py scheduler.py schedule_builder.py schedul
 COPY api/ api/
 COPY StudyFlow/__init__.py StudyFlow/plan_view.py StudyFlow/
 
+# /data is where the host mounts its volume (Railway rejects Docker's own
+# VOLUME instruction, so the mount is configured in the host's settings).
 RUN mkdir -p /data
-VOLUME ["/data"]
 
 EXPOSE 8010
 
