@@ -6,6 +6,12 @@
  * to the front so the clock is right. No plan or a stale plan sends the
  * student to the laptop, where planning lives. Tapping a session opens
  * Focus for it, with the session passed as route params.
+ *
+ * Above the list: the day's goal (done minutes against planned, as a
+ * bar), a quick-start button for the session on now (or the next one,
+ * early), the mentor's two sentences once something is done, and a
+ * "needs attention" strip of overdue and CRITICAL / HIGH assignments
+ * from the progress answer.
  */
 
 import { router } from "expo-router";
@@ -17,14 +23,18 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { session } from "../../auth";
 import { useSession } from "../../auth/useSession";
+import { formatMinutes, todayLines } from "../../history/view";
+import { progress, useProgress } from "../../progress";
 import { today, useToday } from "../../today";
-import { clock12, TodayRow, TodayView } from "../../today/view";
+import { attention, AttentionRow } from "../../today/attention";
+import { clock12, TodayRow, TodayView, todayTotals } from "../../today/view";
 import { colors } from "../../ui/AuthForm";
 
 const STATE_LABEL: Record<TodayRow["state"], string> = {
   done: "Done",
   now: "Now",
   past: "Missed",
+  next: "Next",
   upcoming: "Not started",
 };
 
@@ -43,6 +53,7 @@ function openFocus(row: TodayRow) {
 function SessionRow({ row }: { row: TodayRow }) {
   const done = row.state === "done";
   const now = row.state === "now";
+  const next = row.state === "next";
   return (
     <Pressable
       onPress={() => openFocus(row)}
@@ -60,7 +71,7 @@ function SessionRow({ row }: { row: TodayRow }) {
           {row.subject ? `${row.subject} · ` : ""}{row.duration_minutes} min
         </Text>
       </View>
-      <Text style={[styles.badge, now && styles.badgeNow, done && styles.badgeDone, row.state === "past" && styles.badgePast, row.state === "upcoming" && styles.badgeUpcoming]}>
+      <Text style={[styles.badge, now && styles.badgeNow, next && styles.badgeNext, done && styles.badgeDone, row.state === "past" && styles.badgePast, row.state === "upcoming" && styles.badgeUpcoming]}>
         {done ? "✓ Done" : row.state === "upcoming" ? "○ Not started" : STATE_LABEL[row.state]}
       </Text>
     </Pressable>
@@ -89,11 +100,52 @@ function Body({ view }: { view: TodayView }) {
   }
 }
 
+function TopOfDay({ view, needs }: { view: TodayView | null; needs: AttentionRow[] }) {
+  const lines = view ? todayLines(todayTotals(view)) : [];
+  const start = view ? view.now ?? view.next : null;
+  return (
+    <View style={styles.topOfDay}>
+      {view && view.goal.plannedMinutes > 0 ? (
+        <View style={styles.goal}>
+          <View style={styles.goalBar}><View style={[styles.goalFill, { width: `${view.goal.percent}%` }]} /></View>
+          <Text style={styles.goalText}>
+            {formatMinutes(view.goal.doneMinutes)} of {formatMinutes(view.goal.plannedMinutes)} planned · {view.done} of {view.total} session{view.total === 1 ? "" : "s"} done
+          </Text>
+        </View>
+      ) : null}
+      {view && start ? (
+        <Pressable onPress={() => openFocus(start)} accessibilityRole="button" style={({ pressed }) => [styles.quick, pressed && styles.rowPressed]}>
+          <Text style={styles.quickText}>{view.now ? "Start now" : "Start early"}: {start.assignment}</Text>
+          <Text style={styles.quickSub}>{view.now ? `until ${clock12(start.end)}` : `planned for ${clock12(start.start)}`} · {start.duration_minutes} min</Text>
+        </Pressable>
+      ) : null}
+      {lines.length ? (
+        <View style={styles.cheer}>
+          <Text style={styles.cheerMain}>{lines[0]}</Text>
+          <Text style={styles.cheerSub}>{lines[1]}</Text>
+        </View>
+      ) : null}
+      {needs.length ? (
+        <View style={styles.needs}>
+          <Text style={styles.needsTitle}>Needs attention</Text>
+          {needs.map((n) => (
+            <Text key={n.id} style={styles.needsRow} numberOfLines={1}>
+              <Text style={[styles.needsKind, n.kind === "overdue" && styles.needsOverdue]}>{n.kind === "overdue" ? "Overdue" : n.risk}</Text>
+              {"  "}{n.name} · {n.kind === "overdue" ? n.detail : n.detail.split(" · ")[1]}
+            </Text>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 export default function TodayScreen() {
   const { email, user } = useSession();
   const { status, view, message } = useToday();
+  const { progress: p } = useProgress();
 
-  const refresh = useCallback(() => { void today.load(); }, []);
+  const refresh = useCallback(() => { void today.load(); void progress.load(); }, []);
 
   useEffect(() => {
     refresh();
@@ -104,6 +156,8 @@ export default function TodayScreen() {
   }, [refresh]);
 
   const rows = view?.kind === "sessions" ? view.rows : [];
+  const needs = p ? attention(p.assignments, view?.date ?? new Date().toISOString().slice(0, 10)) : [];
+  const sessionsView = view?.kind === "sessions" ? view : null;
 
   return (
     <SafeAreaView style={styles.page}>
@@ -134,6 +188,7 @@ export default function TodayScreen() {
         renderItem={({ item }) => <SessionRow row={item} />}
         contentContainerStyle={styles.list}
         refreshControl={<RefreshControl refreshing={status === "refreshing"} onRefresh={refresh} tintColor={colors.accent} />}
+        ListHeaderComponent={sessionsView || needs.length ? <TopOfDay view={sessionsView} needs={needs} /> : null}
         ListEmptyComponent={
           status === "loading" ? <Text style={styles.loading}>Loading today…</Text>
           : status === "error" ? <Notice title="Can't load today" body="Pull down to try again." />
@@ -173,6 +228,23 @@ const styles = StyleSheet.create({
   badgeNow: { color: "#fff", backgroundColor: colors.accent },
   badgeDone: { color: "#1f7a3a", backgroundColor: "#dff5e5" },
   badgePast: { color: "#8a5a00", backgroundColor: "#fff1cc" },
+  badgeNext: { color: colors.accent, backgroundColor: "#e3f1fd" },
+  topOfDay: { gap: 10, paddingBottom: 6 },
+  goal: { gap: 6 },
+  goalBar: { height: 8, borderRadius: 999, backgroundColor: "#e5e5ea", overflow: "hidden" },
+  goalFill: { height: "100%", borderRadius: 999, backgroundColor: "#1f7a3a" },
+  goalText: { color: colors.muted, fontSize: 13, fontVariant: ["tabular-nums"] },
+  quick: { backgroundColor: colors.accent, borderRadius: 14, paddingVertical: 14, paddingHorizontal: 16, gap: 2 },
+  quickText: { color: "#fff", fontSize: 17, fontWeight: "700" },
+  quickSub: { color: "#e3f1fd", fontSize: 13 },
+  cheer: { backgroundColor: "#e3f1fd", borderRadius: 14, padding: 14, gap: 2 },
+  cheerMain: { color: colors.ink, fontSize: 16, fontWeight: "700" },
+  cheerSub: { color: colors.ink, fontSize: 14 },
+  needs: { backgroundColor: "#fff1cc", borderRadius: 14, padding: 14, gap: 6 },
+  needsTitle: { color: "#8a5a00", fontSize: 12, textTransform: "uppercase", letterSpacing: 1, fontWeight: "700" },
+  needsRow: { color: colors.ink, fontSize: 14 },
+  needsKind: { fontWeight: "700", color: "#d35400" },
+  needsOverdue: { color: colors.danger },
   badgeUpcoming: { color: colors.muted, backgroundColor: "transparent", fontWeight: "500" },
   notice: { backgroundColor: colors.field, borderRadius: 14, padding: 18, gap: 6, marginTop: 8 },
   noticeTitle: { color: colors.ink, fontSize: 17, fontWeight: "600" },
