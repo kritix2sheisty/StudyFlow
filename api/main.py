@@ -14,7 +14,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from api import account, assignments, auth, focus, plan, study_time
+from api import account, assignments, auth, focus, history, plan, study_time
 from api.auth import ApiError
 
 
@@ -54,5 +54,6 @@ def create_api() -> Starlette:
         Route("/api/focus/next", focus.next_session, methods=["GET"]),
         Route("/api/focus/today", focus.today, methods=["GET"]),
         Route("/api/focus/complete", focus.complete, methods=["POST"]),
+        Route("/api/focus/history", history.history, methods=["GET"]),
     ]
     return Starlette(routes=routes, exception_handlers={ApiError: _api_error})
