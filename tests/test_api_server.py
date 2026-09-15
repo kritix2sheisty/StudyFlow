@@ -72,5 +72,7 @@ def test_dockerfile_ships_the_standalone_api_and_nothing_of_reflex():
                    "schedule_analyzer.py", "schedule_optimizer.py", "study_plan.py", "api/", "StudyFlow/plan_view.py"):
         assert needed in copied, needed
     assert "StudyFlow/StudyFlow.py" not in copied and "tests/" not in copied
+    # Railway rejects Docker's VOLUME instruction ("use Railway Volumes"); the volume is attached in the host's settings.
+    assert not any(line.startswith("VOLUME") for line in instructions)
     ignored = (root / ".dockerignore").read_text().split()
     assert "data/" in ignored and "*.db" in ignored and "mobile/" in ignored
