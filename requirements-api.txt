@@ -1,0 +1,4 @@
+# The API on its own (api_server.py): no Reflex. Versions match what Reflex 0.9.10 installs.
+starlette>=1.0
+uvicorn>=0.30
+argon2-cffi>=23.1
