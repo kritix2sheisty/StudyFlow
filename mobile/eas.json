@@ -12,10 +12,5 @@
       },
       "environment": "preview"
     }
-  },
-  "update": {
-    "preview": {
-      "channel": "preview"
-    }
   }
 }
