@@ -1,0 +1,15 @@
+.git
+.web
+.states
+.logs
+.claude
+.pytest_cache
+__pycache__
+*.pyc
+data/
+*.db
+tests/
+mobile/
+assets/
+.env
+*.md

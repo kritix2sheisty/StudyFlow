@@ -182,6 +182,61 @@ Notes:
   need cleartext traffic enabled on Android and an App Transport Security
   exception on iOS.
 
+## Hosting the API (so phones work without the laptop)
+
+The phone app only needs the API, and the API runs without Reflex:
+
+```
+STUDYFLOW_DB_PATH=/data/studyflow.db uvicorn api_server:app --host 0.0.0.0 --port 8010
+```
+
+`api_server.py` exposes the same routes the web app mounts, creates the
+tables on start, and keeps the database wherever `STUDYFLOW_DB_PATH`
+points (default: `data/studyflow.db`). `requirements-api.txt` is the
+API-only dependency list, and the `Dockerfile` packages exactly that for a
+container host: it expects a volume at `/data` and reads `PORT`.
+
+Steps on a container host with a persistent volume (Railway's free plan,
+for example):
+
+1. Create the project from this GitHub repository; the host detects the
+   `Dockerfile`.
+2. Add a volume mounted at `/data`.
+3. Set `STUDYFLOW_DB_PATH=/data/studyflow.db` (already the image default)
+   and let the host set `PORT`.
+4. Open `https://<your-app-host>/api/health`; it answers `{"status":"ok"}`.
+5. Put that address in the phone app's build (below). Keep a copy of the
+   database now and then: it is one small file at `/data/studyflow.db`.
+
+Hosts without a persistent disk (Render's free tier, for example) lose the
+SQLite file on every restart; they need a streaming backup such as
+Litestream to an object store, which is not set up here.
+
+### Getting the phone app to students without the laptop
+
+Expo Go can no longer open a published update for anyone but members of
+the account that owns the project (since May 2026), so the practical
+route is an Android build shared by link, with updates published over
+the air afterwards:
+
+```
+npm install --global eas-cli
+eas login                       # a free Expo account
+cd mobile
+eas init                        # links the project; adds the projectId to app.json
+eas update:configure            # adds updates.url to app.json
+eas env:create --name EXPO_PUBLIC_API_URL --value https://<your-app-host> --environment preview --visibility plaintext
+eas build -p android --profile preview    # an APK; share the link it prints
+eas update --channel preview --environment preview --message "what changed"   # later changes, no reinstall
+```
+
+`mobile/eas.json` already defines the `preview` profile (internal
+distribution, APK, channel `preview`) and `app.json` pins the runtime to
+the Expo SDK. The free plan allows 15 Android builds a month; updates are
+unlimited. iPhones need the paid Apple Developer Program for a build; until
+then iPhone users can be added as Viewers of an Expo organisation that owns
+the project and open it in Expo Go, signed in.
+
 ## Technologies
 
 * Python

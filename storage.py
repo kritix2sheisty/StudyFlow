@@ -22,6 +22,7 @@ The API layer must derive the user id from authentication, never
 from anything a client sends.
 """
 
+import os
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -31,7 +32,14 @@ from typing import List, Optional
 
 from models import Assignment, Class, Priority, Test, TimeSlot, Weekday
 
-DB_PATH = Path(__file__).parent / "data" / "studyflow.db"
+def default_db_path() -> Path:
+    """Where the database lives: STUDYFLOW_DB_PATH when a host provides a
+    disk (a mounted volume, say), otherwise data/ next to this file."""
+    configured = os.environ.get("STUDYFLOW_DB_PATH")
+    return Path(configured) if configured else Path(__file__).parent / "data" / "studyflow.db"
+
+
+DB_PATH = default_db_path()
 
 # The one student a StudyFlow without accounts belongs to: the person
 # at this computer. A fixed id, so the same rows are theirs across runs.
