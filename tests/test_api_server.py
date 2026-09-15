@@ -75,6 +75,6 @@ def test_dockerfile_ships_the_standalone_api_and_nothing_of_reflex():
     # Railway rejects Docker's VOLUME instruction ("use Railway Volumes"); the volume is attached in the host's settings.
     assert not any(line.startswith("VOLUME") for line in instructions)
     # "Today" comes from the server clock, so the image carries the students' timezone (override with a TZ variable).
-    assert any("TZ=" in line for line in instructions if line.startswith("ENV"))
+    assert any(line.strip().startswith("TZ=") for line in instructions)          # an ENV continuation line
     ignored = (root / ".dockerignore").read_text().split()
     assert "data/" in ignored and "*.db" in ignored and "mobile/" in ignored
