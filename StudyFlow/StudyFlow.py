@@ -33,6 +33,8 @@ import asyncio
 import time
 from datetime import date, datetime
 
+import os
+
 import reflex as rx
 
 from storage import init_db
@@ -1882,10 +1884,19 @@ def index() -> rx.Component:
 
 
 # The HTTP API (api/) answers everything under /api on this same
-# backend; every other request falls through to Reflex.
+# backend; every other request falls through to Reflex. When the web
+# app is hosted on its own and pointed at an API elsewhere
+# (STUDYFLOW_API_URL, see api_client.py), it mounts nothing: the web
+# host must not expose a second, empty StudyFlow.
+def api_transformer_for_this_host():
+    if os.environ.get("STUDYFLOW_API_URL", "").strip():
+        return None
+    return create_api()
+
+
 app = rx.App(
     theme=rx.theme(accent_color="indigo", gray_color="slate", radius="large", scaling="100%"),
-    api_transformer=create_api(),
+    api_transformer=api_transformer_for_this_host(),
 )
 
 # ---------------------------------------------------------------------

@@ -216,6 +216,35 @@ Hosts without a persistent disk (Render's free tier, for example) lose the
 SQLite file on every restart; they need a streaming backup such as
 Litestream to an object store, which is not set up here.
 
+### Hosting the website against the hosted API
+
+The website is a client of the API whenever `STUDYFLOW_API_URL` is set;
+it then keeps no data of its own and mounts no API. So it can run on a
+host with no disk. Two variables on the web host:
+
+- `STUDYFLOW_API_URL=https://<your-api-host>`
+- `STUDYFLOW_WEB_KEY=<a long random string>`, set to the same value on
+  the API host, so the API applies login limits per browser rather than
+  to the website as a whole. Make one with
+  `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+
+Reflex Cloud's free tier hosts one app; from the project root:
+
+```
+pip install --upgrade reflex-hosting-cli
+reflex login
+reflex deploy --app-name studyflow --hostname studyflow --env STUDYFLOW_API_URL=https://<your-api-host> --env STUDYFLOW_WEB_KEY=<the string> --env TZ=America/La_Paz --exclude-from-backend mobile --exclude-from-backend tests --exclude-from-backend data
+```
+
+Fallback with no card: a Render free web service built from Reflex's
+official `docker-example/production` Dockerfile (Caddy in front of
+`reflex run --env prod --backend-only`; add `/api/*` to its backend
+route matcher). It sleeps after 15 idle minutes and takes about a minute
+to wake, and every wake starts students on a fresh sign-in.
+
+A login on the website lives in the browser tab; students sign in again
+after closing it. That is a known limitation, not a hosting fault.
+
 ### Getting the phone app to students without the laptop
 
 Expo Go can no longer open a published update for anyone but members of
