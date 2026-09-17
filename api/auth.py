@@ -16,6 +16,8 @@ are logged by user id, never by email or password.
 """
 
 import logging
+import os
+import secrets
 import re
 from datetime import datetime
 
@@ -36,6 +38,17 @@ LOGIN_FAILED = "Email or password is incorrect."
 # rate limiting, so limits apply per student rather than to the web
 # app as a whole.
 WEB_CLIENT_HOST = "studyflow-web"
+
+# A web app on another host cannot have that client host. It proves
+# itself instead with STUDYFLOW_WEB_KEY in the X-StudyFlow-Web-Key header
+# (the same value configured on both sides); only then is
+# X-Forwarded-For trusted, so a hosted website still gets per-browser
+# limits rather than one bucket for the whole school.
+WEB_KEY_HEADER = "x-studyflow-web-key"
+
+
+def _web_key() -> str:
+    return os.environ.get("STUDYFLOW_WEB_KEY", "").strip()
 
 login_limiter = security.RateLimiter(limit=10, window_seconds=15 * 60)
 register_limiter = security.RateLimiter(limit=10, window_seconds=15 * 60)
@@ -72,9 +85,16 @@ def _credentials(body: dict) -> tuple[str, str]:
     return email, password
 
 
+def _is_web_app(request: Request, host: str) -> bool:
+    if host == WEB_CLIENT_HOST:
+        return True
+    key = _web_key()
+    return bool(key) and secrets.compare_digest(request.headers.get(WEB_KEY_HEADER, ""), key)
+
+
 def _client_key(request: Request) -> str:
     host = request.client.host if request.client else "unknown"
-    if host == WEB_CLIENT_HOST:
+    if _is_web_app(request, host):
         forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
         return f"web:{forwarded or 'unknown'}"
     return host

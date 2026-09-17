@@ -17,7 +17,9 @@ API which browser it is acting for (X-Forwarded-For) so login and
 registration rate limits apply per student, not to the web app as a
 whole. The API trusts that header only on this in-process transport,
 whose client host is fixed to WEB_CLIENT_HOST and cannot be reached
-from the network.
+from the network, or when the web app proves itself over the network
+with STUDYFLOW_WEB_KEY (sent as X-StudyFlow-Web-Key; the same value
+must be set on the API host).
 """
 
 import os
@@ -72,6 +74,9 @@ class ApiClient:
             headers["Authorization"] = f"Bearer {self.token}"
         if self.browser_ip:
             headers["X-Forwarded-For"] = self.browser_ip
+        web_key = os.environ.get("STUDYFLOW_WEB_KEY", "").strip()
+        if web_key:                                                       # a hosted web app proves itself to a hosted API
+            headers["X-StudyFlow-Web-Key"] = web_key
         async with _make_client() as client:
             response = await client.request(method, path, json=json, params=params, headers=headers)
         if response.status_code == 204:
