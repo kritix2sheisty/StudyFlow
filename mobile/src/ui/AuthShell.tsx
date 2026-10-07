@@ -2,7 +2,7 @@
  * src/ui/AuthShell.tsx
  * The frame around the sign-in and create-account screens: the app
  * name, a title, the form, a link to the other screen, and the server
- * address in small print so a student can see at a glance which laptop
+ * address in small print so a student can see at a glance which API
  * the phone is talking to.
  */
 

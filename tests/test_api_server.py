@@ -76,5 +76,6 @@ def test_dockerfile_ships_the_standalone_api_and_nothing_of_reflex():
     assert not any(line.startswith("VOLUME") for line in instructions)
     # "Today" comes from the server clock, so the image carries the students' timezone (override with a TZ variable).
     assert any(line.strip().startswith("TZ=") for line in instructions)          # an ENV continuation line
+    assert any("STUDYFLOW_TRUST_PROXY=1" in line for line in instructions)
     ignored = (root / ".dockerignore").read_text().split()
     assert "data/" in ignored and "*.db" in ignored and "mobile/" in ignored

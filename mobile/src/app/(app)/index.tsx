@@ -3,9 +3,9 @@
  * Today. The list of study sessions planned for today, each marked done,
  * on now, past or upcoming; a header with the date and how many are
  * done; pull down to refresh, and a refresh whenever the app comes back
- * to the front so the clock is right. No plan or a stale plan sends the
- * student to the laptop, where planning lives. Tapping a session opens
- * Focus for it, with the session passed as route params.
+ * to the front so the clock is right. No plan or a stale plan can be
+ * generated here. Tapping a session opens Focus for it, with the
+ * session passed as route params.
  *
  * Above the list: the day's goal (done minutes against planned, as a
  * bar), a quick-start button for the session on now (or the next one,
@@ -26,6 +26,7 @@ import { useSession } from "../../auth/useSession";
 import { formatMinutes, todayLines } from "../../history/view";
 import { progress, useProgress } from "../../progress";
 import { today, useToday } from "../../today";
+import { GeneratePlanButton } from "../../today/GeneratePlanButton";
 import { attention, AttentionRow } from "../../today/attention";
 import { clock12, TodayRow, TodayView, todayTotals } from "../../today/view";
 import { colors } from "../../ui/AuthForm";
@@ -78,23 +79,24 @@ function SessionRow({ row }: { row: TodayRow }) {
   );
 }
 
-function Notice({ title, body }: { title: string; body: string }) {
+function Notice({ title, body, action }: { title: string; body: string; action?: { label: string; busy: boolean; onPress: () => void } }) {
   return (
     <View style={styles.notice}>
       <Text style={styles.noticeTitle}>{title}</Text>
       <Text style={styles.noticeBody}>{body}</Text>
+      {action ? <GeneratePlanButton label={action.label} busy={action.busy} onPress={action.onPress} /> : null}
     </View>
   );
 }
 
-function Body({ view }: { view: TodayView }) {
+function Body({ view, generating, onGenerate }: { view: TodayView; generating: boolean; onGenerate: () => void }) {
   switch (view.kind) {
     case "no_plan":
-      return <Notice title="No plan yet" body="Add your assignments and study time on your laptop and generate a plan. Today's sessions will show up here." />;
+      return <Notice title="No plan yet" body="Generate a plan from your assignments and study times. If those are not on StudyFlow yet, add them on the website first." action={{ label: "Generate plan", busy: generating, onPress: onGenerate }} />;
     case "plan_stale":
-      return <Notice title="Your plan needs regenerating" body="Something changed since it was made. Regenerate it on your laptop, then pull down to refresh." />;
+      return <Notice title="Your plan needs regenerating" body="Something changed since it was made. Generate a new plan to match your current assignments." action={{ label: "Regenerate plan", busy: generating, onPress: onGenerate }} />;
     case "empty":
-      return <Notice title="Nothing planned today" body="Enjoy the day off, or check tomorrow's sessions on your laptop." />;
+      return <Notice title="Nothing planned today" body="Enjoy the day off. Tomorrow's sessions will show up here when the day changes." />;
     default:
       return null;
   }
@@ -142,10 +144,11 @@ function TopOfDay({ view, needs }: { view: TodayView | null; needs: AttentionRow
 
 export default function TodayScreen() {
   const { email, user } = useSession();
-  const { status, view, message } = useToday();
+  const { status, generating, view, message } = useToday();
   const { progress: p } = useProgress();
 
   const refresh = useCallback(() => { void today.load(); void progress.load(); }, []);
+  const generate = useCallback(() => { void today.generate().then(() => progress.load()); }, []);
 
   useEffect(() => {
     refresh();
@@ -192,7 +195,7 @@ export default function TodayScreen() {
         ListEmptyComponent={
           status === "loading" ? <Text style={styles.loading}>Loading today…</Text>
           : status === "error" ? <Notice title="Can't load today" body="Pull down to try again." />
-          : view ? <Body view={view} />
+          : view ? <Body view={view} generating={generating} onGenerate={generate} />
           : null
         }
         ListFooterComponent={<Text style={styles.footer}>Signed in as {user?.email ?? email}</Text>}

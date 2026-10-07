@@ -26,7 +26,7 @@ def test_state_exposes_the_vars_the_pages_bind_to():
         "has_plan", "plan_stale", "plan_message", "plan_days", "today_plan", "plan_statuses",
         "plan_required", "plan_scheduled", "plan_unscheduled", "plan_completion", "progress_value",
         "authenticated", "user_email", "auth_email", "auth_password", "auth_confirm", "auth_error",
-        "import_available", "import_summary",
+        "saved_token", "import_available", "import_summary",
     ):
         assert hasattr(DashboardState, name), name
 

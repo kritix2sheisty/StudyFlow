@@ -16,8 +16,8 @@
  * todayTotals(), the same numbers in the shape the motivation
  * sentences take, so Today needs no second fetch for them.
  *
- * The kind says which screen to draw: no_plan and plan_stale point the
- * student to the laptop, empty means a fresh plan with nothing today.
+ * The kind says which screen to draw: no_plan and plan_stale invite
+ * generating a plan on the phone, empty means a fresh plan with nothing today.
  */
 
 export type TodayReason = null | "no_plan" | "plan_stale";

@@ -1,0 +1,12 @@
+# Railway: API-only container. After first deploy, attach a volume at
+# /data so the SQLite file survives restarts, set TZ to the students'
+# timezone, and (if the website is hosted separately) STUDYFLOW_WEB_KEY.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/api/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"

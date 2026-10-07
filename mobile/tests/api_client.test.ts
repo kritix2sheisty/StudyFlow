@@ -119,7 +119,7 @@ test("a fetch failure becomes a NetworkError naming the configured server", asyn
   const err = await client(failing).api.login("ana@example.com", "pw").catch((e) => e);
   expect(err).toBeInstanceOf(NetworkError);
   expect(err.message).toContain(BASE);
-  expect(err.message).toContain("same Wi-Fi");
+  expect(err.message).toContain("reach that address");
 });
 
 test("a timeout becomes a NetworkError", async () => {
@@ -194,6 +194,16 @@ test("history reads the documented path with the days query and a token", async 
     ["GET", "/api/focus/history?days=30", "Bearer tok"],
     ["GET", "/api/focus/history?days=7", "Bearer tok"],
   ]);
+});
+
+test("generatePlan posts the documented path with a token", async () => {
+  const f = fakeFetch(200, { fresh: true });
+  const { api } = client(f.impl, "tok");
+  await api.generatePlan();
+  expect([f.calls[0].init.method, f.calls[0].url, headersOf(f.calls[0]).Authorization]).toEqual(
+    ["POST", `${BASE}/api/plan/generate`, "Bearer tok"],
+  );
+  expect(f.calls[0].init.body).toBeUndefined();
 });
 
 test("focusToday reads today's sessions with a token", async () => {

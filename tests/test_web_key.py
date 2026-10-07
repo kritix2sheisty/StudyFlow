@@ -30,6 +30,7 @@ def temp_db(tmp_path, monkeypatch):
     auth.login_limiter.reset()
     auth.register_limiter.reset()
     monkeypatch.delenv("STUDYFLOW_WEB_KEY", raising=False)
+    monkeypatch.delenv("STUDYFLOW_TRUST_PROXY", raising=False)
     yield
 
 
@@ -112,3 +113,27 @@ def test_the_web_app_sends_no_key_header_when_none_is_configured(monkeypatch):
     import asyncio
     asyncio.run(ApiClient()._request("GET", "/api/health"))
     assert "x-studyflow-web-key" not in seen["headers"]
+
+
+def test_a_hosted_phone_is_limited_by_the_forwarded_address(monkeypatch):
+    monkeypatch.setenv("STUDYFLOW_TRUST_PROXY", "1")
+    assert auth._client_key(request_from("10.0.0.5", {"X-Forwarded-For": "203.0.113.50"})) == "203.0.113.50"
+
+
+def test_the_laptop_does_not_trust_a_forwarded_address():
+    assert auth._client_key(request_from("10.0.0.5", {"X-Forwarded-For": "203.0.113.50"})) == "10.0.0.5"
+
+
+def test_hosted_phones_do_not_share_a_login_limit(monkeypatch):
+    """On a container host every phone arrives from the proxy; limits must follow X-Forwarded-For."""
+    monkeypatch.setenv("STUDYFLOW_TRUST_PROXY", "1")
+    client = TestClient(create_api())
+    client.post("/api/auth/register", json={"email": "ana@example.com", "password": "a long enough password"})
+    client.post("/api/auth/register", json={"email": "ben@example.com", "password": "a long enough password"})
+    auth.login_limiter.reset()
+    abusive = {"X-Forwarded-For": "203.0.113.10"}
+    for _ in range(10):
+        client.post("/api/auth/login", json={"email": "ana@example.com", "password": "wrong"}, headers=abusive)
+    other = {"X-Forwarded-For": "203.0.113.11"}
+    r = client.post("/api/auth/login", json={"email": "ben@example.com", "password": "a long enough password"}, headers=other)
+    assert r.status_code == 200

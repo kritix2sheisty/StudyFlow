@@ -181,7 +181,7 @@ export default function FocusScreen() {
       </View>
 
       <Text style={styles.next}>
-        {next ? `Up next: ${next.assignment} at ${clock12(next.start)}` : nextReason === "nothing_next" ? "Nothing after this. Nice." : nextReason === "plan_stale" ? "Your plan needs regenerating on your laptop." : " "}
+        {next ? `Up next: ${next.assignment} at ${clock12(next.start)}` : nextReason === "nothing_next" ? "Nothing after this. Nice." : nextReason === "plan_stale" ? "Your plan needs regenerating. Open Today to build a new one." : " "}
       </Text>
     </SafeAreaView>
   );

@@ -18,6 +18,8 @@ import { history, useHistory } from "../../history";
 import { formatMinutes, todayLines, weekSummary } from "../../history/view";
 import { progress, useProgress } from "../../progress";
 import type { ProgressAssignment } from "../../progress/store";
+import { today, useToday } from "../../today";
+import { GeneratePlanButton } from "../../today/GeneratePlanButton";
 import { colors } from "../../ui/AuthForm";
 
 const RISK_COLOR: Record<string, string> = {
@@ -64,8 +66,10 @@ function AssignmentRow({ a }: { a: ProgressAssignment }) {
 
 export default function ProgressScreen() {
   const { status, progress: p, message } = useProgress();
+  const { generating, message: todayMessage } = useToday();
   const { history: h, message: historyMessage } = useHistory();
   const refresh = useCallback(() => { void progress.load(); void history.load(); }, []);
+  const generate = useCallback(() => { void today.generate().then(() => progress.load()); }, []);
   useEffect(() => { refresh(); }, [refresh]);
 
   const week = h ? weekSummary(h) : null;
@@ -92,7 +96,7 @@ export default function ProgressScreen() {
             </>
           ) : (
             <Text style={styles.cardLine}>
-              {week.today.done > 0 ? `${formatMinutes(week.today.done)} studied. ` : ""}Nothing planned for today{p && !p.fresh ? " until the plan is regenerated on your laptop" : ""}.
+              {week.today.done > 0 ? `${formatMinutes(week.today.done)} studied. ` : ""}Nothing planned for today{p && !p.fresh ? " until you generate a plan" : ""}.
             </Text>
           )}
         </View>
@@ -129,7 +133,12 @@ export default function ProgressScreen() {
         <View style={styles.assignHead}>
           <Text style={styles.sectionTitle}>Assignments</Text>
           <Text style={styles.sectionMeta}>{p.active_count} active · {p.completed_count} finished</Text>
-          {!p.fresh ? <Text style={styles.stale}>Your plan needs regenerating on your laptop; hours shown are from the assignments themselves.</Text> : null}
+          {!p.fresh ? (
+            <View style={styles.staleBox}>
+              <Text style={styles.stale}>Your plan needs regenerating; hours shown are from the assignments themselves.</Text>
+              <GeneratePlanButton label="Regenerate plan" busy={generating} onPress={generate} />
+            </View>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -143,7 +152,7 @@ export default function ProgressScreen() {
         </Pressable>
       </View>
       <Text style={styles.title}>Progress</Text>
-      {message || historyMessage ? <Text style={styles.error} accessibilityRole="alert">{message ?? historyMessage}</Text> : null}
+      {message || historyMessage || todayMessage ? <Text style={styles.error} accessibilityRole="alert">{message ?? historyMessage ?? todayMessage}</Text> : null}
 
       <FlatList
         data={p?.assignments ?? []}
@@ -194,7 +203,8 @@ const styles = StyleSheet.create({
   link: { alignSelf: "flex-start", paddingVertical: 4 },
   linkText: { color: colors.accent, fontSize: 15, fontWeight: "600" },
   assignHead: { gap: 4 },
-  stale: { color: "#8a5a00", fontSize: 13, backgroundColor: "#fff1cc", borderRadius: 10, padding: 10 },
+  staleBox: { gap: 8, backgroundColor: "#fff1cc", borderRadius: 10, padding: 10 },
+  stale: { color: "#8a5a00", fontSize: 13 },
   row: { backgroundColor: colors.field, borderRadius: 14, padding: 14, gap: 6 },
   rowTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 12 },
   name: { flex: 1, color: colors.ink, fontSize: 17, fontWeight: "600" },

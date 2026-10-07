@@ -802,3 +802,46 @@ def test_no_data_behaviour_is_unchanged_by_the_safety_net():
     assert state.has_plan is False and state.plan_stale is False and state.plan_message == ""
     run(state.generate_study_plan())
     assert state.has_plan is False and "assignments" in state.plan_message
+
+
+def test_restore_session_turns_a_saved_token_into_a_signed_in_student():
+    state = DashboardState(_reflex_internal_init=True)
+    state.saved_token = TOKEN
+    run(state.restore_session())
+    assert state.authenticated is True
+    assert state._auth_token == TOKEN
+    assert state.user_email == "student@example.com"
+
+
+def test_restore_session_forgets_a_dead_token():
+    state = DashboardState(_reflex_internal_init=True)
+    state.saved_token = "not-a-real-token"
+    run(state.restore_session())
+    assert state.authenticated is False
+    assert state.saved_token == ""
+    assert state._auth_token == ""
+
+
+def test_load_data_restores_from_the_saved_token_without_a_live_session():
+    state = DashboardState(_reflex_internal_init=True)
+    state.saved_token = TOKEN
+    run(state.load_data())
+    assert state.authenticated is True
+    assert state.has_plan is False
+
+
+def test_logout_clears_the_saved_token():
+    state = fresh_state()
+    state.saved_token = TOKEN
+    run(state.logout())
+    assert state.saved_token == ""
+    assert state.authenticated is False
+    assert state._auth_token == ""
+
+
+def test_login_from_a_form_payload_signs_in():
+    state = DashboardState(_reflex_internal_init=True)
+    run(state.login({"email": "student@example.com", "password": "a long enough password"}))
+    assert state.authenticated is True
+    assert state.saved_token
+    assert state.user_email == "student@example.com"

@@ -44,6 +44,10 @@ WEB_CLIENT_HOST = "studyflow-web"
 # (the same value configured on both sides); only then is
 # X-Forwarded-For trusted, so a hosted website still gets per-browser
 # limits rather than one bucket for the whole school.
+#
+# Phones hitting a hosted API also share one proxy address. When
+# STUDYFLOW_TRUST_PROXY is set (the API container), X-Forwarded-For is
+# the phone's address and login limits apply per phone.
 WEB_KEY_HEADER = "x-studyflow-web-key"
 
 
@@ -92,11 +96,20 @@ def _is_web_app(request: Request, host: str) -> bool:
     return bool(key) and secrets.compare_digest(request.headers.get(WEB_KEY_HEADER, ""), key)
 
 
+def _trust_proxy() -> bool:
+    """Container hosts put every phone behind one proxy address."""
+    return os.environ.get("STUDYFLOW_TRUST_PROXY", "").strip().lower() in {"1", "true", "yes"}
+
+
 def _client_key(request: Request) -> str:
     host = request.client.host if request.client else "unknown"
     if _is_web_app(request, host):
         forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
         return f"web:{forwarded or 'unknown'}"
+    if _trust_proxy():
+        forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        if forwarded:
+            return forwarded
     return host
 
 

@@ -12,11 +12,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONUTF8=1 \
     STUDYFLOW_DB_PATH=/data/studyflow.db \
+    STUDYFLOW_TRUST_PROXY=1 \
     PORT=8010 \
     TZ=America/La_Paz
 # TZ: every "today" (the plan, Today, Focus, streaks) comes from the server
 # clock, and a host runs in UTC, where the students' Monday evening is
 # already Tuesday. Set TZ to the students' zone; a host variable overrides.
+# STUDYFLOW_TRUST_PROXY: a container host puts every phone behind one
+# reverse-proxy address, so login limits must use X-Forwarded-For.
 
 WORKDIR /app
 

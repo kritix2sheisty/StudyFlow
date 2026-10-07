@@ -146,8 +146,10 @@ packaging.
 ## Mobile client (Expo)
 
 `mobile/` is a React Native app built with Expo that talks to the same API
-as the web app. Students run it on their own phone through the Expo Go app,
-on the same Wi-Fi as the laptop running StudyFlow.
+as the web app. Students run it on their own phone through the Expo Go app
+or a shared Android build. Point `EXPO_PUBLIC_API_URL` at the hosted API
+so the phone works off campus. For laptop testing, use the LAN address
+and the same Wi-Fi as the computer running StudyFlow.
 
 1. Start StudyFlow as usual (`reflex run`); the API listens on the backend
    port on every interface.
@@ -157,7 +159,8 @@ on the same Wi-Fi as the laptop running StudyFlow.
    ```
    cd mobile
    npm install
-   copy .env.example .env      # then edit EXPO_PUBLIC_API_URL to http://<LAN IP>:<backend port>
+   copy .env.example .env      # then edit EXPO_PUBLIC_API_URL to https://<your-api-host>
+                               # (or http://<LAN IP>:<backend port> for laptop testing)
    ```
 
 4. Run it: `npx expo start`, then scan the QR code with Expo Go (Android)
@@ -216,6 +219,17 @@ Hosts without a persistent disk (Render's free tier, for example) lose the
 SQLite file on every restart; they need a streaming backup such as
 Litestream to an object store, which is not set up here.
 
+The image sets `STUDYFLOW_TRUST_PROXY=1` so login limits follow each
+phone's address (`X-Forwarded-For`) rather than the host's reverse
+proxy. Leave that unset when you run the API on a laptop.
+
+`railway.toml` points Railway at the Dockerfile and `/api/health`. After
+the first deploy, attach a volume at `/data` in the Railway dashboard
+(the SQLite file lives there). Then set `EXPO_PUBLIC_API_URL` in the
+phone app to `https://<your-api-host>` with no trailing slash, rebuild
+or restart Expo with `-c`, and students can generate a plan from Today
+without being on your Wi-Fi.
+
 ### Hosting the website against the hosted API
 
 The website is a client of the API whenever `STUDYFLOW_API_URL` is set;
@@ -240,10 +254,17 @@ Fallback with no card: a Render free web service built from Reflex's
 official `docker-example/production` Dockerfile (Caddy in front of
 `reflex run --env prod --backend-only`; add `/api/*` to its backend
 route matcher). It sleeps after 15 idle minutes and takes about a minute
-to wake, and every wake starts students on a fresh sign-in.
+to wake.
 
-A login on the website lives in the browser tab; students sign in again
-after closing it. That is a known limitation, not a hosting fault.
+To use the local website against the hosted API (so the laptop and the
+phone share one account), set this in the same terminal before `reflex run`:
+
+```
+$env:STUDYFLOW_API_URL="https://<your-api-host>"
+```
+
+A sign-in on the website is kept in this browser until the student logs
+out. Use the same email on the phone.
 
 ### Getting the phone app to students without the laptop
 

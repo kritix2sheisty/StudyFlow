@@ -73,6 +73,7 @@ export interface ApiClient {
   login(email: string, password: string): Promise<LoginAnswer>;
   logout(): Promise<void>;
   me(): Promise<User>;
+  generatePlan(): Promise<unknown>;
   focusToday(): Promise<TodayAnswer>;
   focusCurrent(): Promise<CurrentAnswer>;
   focusNext(): Promise<NextAnswer>;
@@ -84,7 +85,7 @@ export interface ApiClient {
 export const DEFAULT_TIMEOUT_MS = 15_000;
 
 export function unreachableMessage(baseUrl: string): string {
-  return `Can't reach StudyFlow at ${baseUrl}. Check the API is running and this phone is on the same Wi-Fi.`;
+  return `Can't reach StudyFlow at ${baseUrl}. Check the API is running and this phone can reach that address.`;
 }
 
 export const NO_SERVER_MESSAGE =
@@ -151,6 +152,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     me: () => request("GET", "/api/me"),
 
     // ---- Plan, progress, focus
+    generatePlan: () => request("POST", "/api/plan/generate"),
     focusToday: () => request("GET", "/api/focus/today"),
     focusCurrent: () => request("GET", "/api/focus/current"),
     focusNext: () => request("GET", "/api/focus/next"),

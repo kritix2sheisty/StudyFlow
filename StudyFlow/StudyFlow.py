@@ -101,9 +101,11 @@ class DashboardState(rx.State):
     web app share one truth.
     """
 
-    # ---- Account. The token stays on the server (a backend var is
-    # never sent to the browser); the frontend never supplies a user id.
+    # ---- Account. The live token is a backend var; a copy lives in
+    # localStorage so closing the tab does not force another sign-in.
+    # Log out (or a 401) clears both. The frontend never supplies a user id.
     _auth_token: str = ""
+    saved_token: str = rx.LocalStorage("", name="studyflow_token")
     authenticated: bool = False
     user_email: str = ""
     auth_email: str = ""
@@ -111,13 +113,15 @@ class DashboardState(rx.State):
     auth_confirm: str = ""
     auth_error: str = ""
 
+    def _browser_ip(self) -> str:
+        try:
+            return self.router.session.client_ip or ""
+        except Exception:
+            return ""
+
     def _client(self) -> ApiClient:
         """The API as this student, telling it which browser is acting."""
-        try:
-            browser_ip = self.router.session.client_ip or ""
-        except Exception:
-            browser_ip = ""
-        return ApiClient(self._auth_token, browser_ip)
+        return ApiClient(self._auth_token or self.saved_token, self._browser_ip())
 
     def set_auth_email(self, value: str):
         self.auth_email = value
@@ -134,15 +138,36 @@ class DashboardState(rx.State):
         self.auth_error = ""
 
     async def _sign_in(self, email: str, password: str):
-        result = await ApiClient(browser_ip=self._client().browser_ip).login(email, password)
+        result = await ApiClient(browser_ip=self._browser_ip()).login(email, password)
         self._auth_token = result["token"]
+        self.saved_token = result["token"]
         self.authenticated = True
         self.user_email = email.strip().lower()
         self.auth_email = ""
         self._clear_auth_form()
 
-    async def login(self):
+    async def restore_session(self):
+        """Turn a saved browser token back into a signed-in dashboard, or forget it."""
+        if self.authenticated:
+            return
+        token = (self.saved_token or "").strip()
+        if not token:
+            return
+        try:
+            me = await ApiClient(token, self._browser_ip()).me()
+        except ApiError:
+            self._auth_token = ""
+            self.saved_token = ""
+            return
+        self._auth_token = token
+        self.authenticated = True
+        self.user_email = me["email"]
+
+    async def login(self, form_data: dict | None = None):
         """Sign in with the API; on success the dashboard loads as this student."""
+        if form_data:
+            self.auth_email = str(form_data.get("email", ""))
+            self.auth_password = str(form_data.get("password", ""))
         email, password = self.auth_email.strip(), self.auth_password
         if not email or not password:
             self.auth_error = "Enter your email and password."
@@ -154,8 +179,12 @@ class DashboardState(rx.State):
             return
         return rx.redirect("/")
 
-    async def register(self):
+    async def register(self, form_data: dict | None = None):
         """Create the account with the API, then sign in with it."""
+        if form_data:
+            self.auth_email = str(form_data.get("email", ""))
+            self.auth_password = str(form_data.get("password", ""))
+            self.auth_confirm = str(form_data.get("confirm", ""))
         email, password = self.auth_email.strip(), self.auth_password
         if not email or not password:
             self.auth_error = "Enter an email and choose a password."
@@ -164,7 +193,7 @@ class DashboardState(rx.State):
             self.auth_error = "The two passwords do not match."
             return
         try:
-            await ApiClient(browser_ip=self._client().browser_ip).register(email, password)
+            await ApiClient(browser_ip=self._browser_ip()).register(email, password)
             await self._sign_in(email, password)
         except ApiError as e:
             self.auth_error = e.message
@@ -173,21 +202,24 @@ class DashboardState(rx.State):
 
     async def logout(self):
         """Revoke the session with the API and forget everything on this side."""
-        if self._auth_token:
+        if self._auth_token or self.saved_token:
             try:
                 await self._client().logout()
             except ApiError:
                 pass
+        self.saved_token = ""
         self.reset()
         return rx.redirect("/login")
 
     async def redirect_if_logged_in(self):
         """The login and register pages send a signed-in student to the dashboard."""
+        await self.restore_session()
         if self.authenticated:
             return rx.redirect("/")
 
     async def _signed_out(self):
         """A rejected token means the session ended elsewhere: start over."""
+        self.saved_token = ""
         self.reset()
         return rx.redirect("/login")
 
@@ -334,6 +366,7 @@ class DashboardState(rx.State):
 
     async def load_data(self):
         """Everything a page needs, on page load. Not signed in: go to the login page."""
+        await self.restore_session()
         if not self.authenticated:
             return rx.redirect("/login")
         try:
@@ -976,7 +1009,8 @@ def welcome() -> rx.Component:
                        size=rx.breakpoints(initial="6", md="8")),
             rx.text(
                 "StudyFlow keeps your assignments, deadlines and free time in one place, "
-                "and turns them into a study plan you can actually follow.",
+                "and turns them into a study plan you can actually follow. "
+                "Add work and study time first, then generate the week.",
                 size=rx.breakpoints(initial="2", md="3"), color_scheme="gray", max_width="40em",
             ),
             spacing="2", align="start",
@@ -1033,8 +1067,57 @@ def overview_cards() -> rx.Component:
 # 4. Call to action
 # ---------------------------------------------------------------------
 
-def call_to_action() -> rx.Component:
-    """The primary action, given its own highlighted band so it is the focus of the page."""
+def _setup_row(done, number: str, title: str, detail: str, action: rx.Component) -> rx.Component:
+    return rx.flex(
+        rx.box(
+            rx.cond(done, rx.icon("check", size=16, color="white"), rx.text(number, size="2", weight="bold", color="white")),
+            width="2em", height="2em", border_radius="999px", display="flex",
+            align_items="center", justify_content="center", flex_shrink="0",
+            background=rx.cond(done, rx.color("green", 9), rx.color("accent", 9)),
+        ),
+        rx.vstack(
+            rx.text(title, weight="bold"),
+            rx.text(detail, size="2", color_scheme="gray"),
+            rx.cond(done, rx.box(), action),
+            spacing="1", align="start",
+        ),
+        spacing="3", align="start", width="100%",
+    )
+
+
+def getting_started() -> rx.Component:
+    """First-run: tell the student the order, instead of a generate button that will refuse."""
+    s = DashboardState
+    has_assignments = s.assignments.length() > 0
+    has_slots = s.slots.length() > 0
+    return rx.card(
+        rx.vstack(
+            rx.heading("Get set up in three steps", size="5"),
+            rx.text("Add what you have to do, then when you can study. Generating a plan comes last.",
+                    size="2", color_scheme="gray"),
+            _setup_row(has_assignments, "1", "Add an assignment",
+                       "A name, subject, due date and how long it will take.",
+                       rx.button(rx.icon("plus", size=16), "Add assignment", size="2",
+                                 on_click=s.open_form)),
+            _setup_row(has_slots, "2", "Add when you can study",
+                       "Recurring blocks such as Monday 4–6 PM. The engine will not invent free time.",
+                       rx.button(rx.icon("plus", size=16), "Add study time", size="2", variant="soft",
+                                 on_click=s.open_slot_form)),
+            _setup_row(s.has_plan, "3", "Generate your week",
+                       "Once both of the above are in, StudyFlow places the work before each due date.",
+                       rx.button(rx.icon("sparkles", size=16), "Generate study plan", size="2", variant="soft",
+                                 on_click=s.generate_study_plan,
+                                 disabled=~(has_assignments & has_slots))),
+            spacing="4", align="start", width="100%",
+        ),
+        size="3", width="100%",
+        background=rx.color("accent", 2),
+        border=f"1px solid {rx.color('accent', 5)}",
+    )
+
+
+def ready_cta() -> rx.Component:
+    """Generate (or regenerate) once the student already has work and study time."""
     s = DashboardState
     return rx.card(
         rx.flex(
@@ -1058,6 +1141,15 @@ def call_to_action() -> rx.Component:
         size="3", width="100%",
         background=rx.color("accent", 2),
         border=f"1px solid {rx.color('accent', 5)}",
+    )
+
+
+def call_to_action() -> rx.Component:
+    s = DashboardState
+    return rx.cond(
+        (s.assignments.length() > 0) & (s.slots.length() > 0),
+        ready_cta(),
+        getting_started(),
     )
 
 
@@ -1498,6 +1590,8 @@ def study_time_section() -> rx.Component:
                     rx.vstack(
                         rx.icon("calendar_clock", size=28, color=rx.color("gray", 9)),
                         rx.text("No study time added yet.", weight="medium"),
+                        rx.text("Add at least one weekly block so a plan has hours to fill.",
+                                size="2", color_scheme="gray", text_align="center"),
                         spacing="2", align="center", padding_y="5",
                     ),
                     width="100%",
@@ -2103,16 +2197,19 @@ def auth_error() -> rx.Component:
 def login_page() -> rx.Component:
     s = DashboardState
     return auth_shell(
-        "Sign in", "Your assignments, study time and plan are yours alone.",
-        rx.vstack(
-            form_field("Email", rx.input(value=s.auth_email, on_change=s.set_auth_email, type="email",
-                                         placeholder="you@school.edu", width="100%"), ""),
-            form_field("Password", rx.input(value=s.auth_password, on_change=s.set_auth_password, type="password",
-                                            width="100%"), ""),
-            auth_error(),
-            rx.button("Sign in", on_click=s.login, size="3", width="100%"),
-            rx.text("New to StudyFlow? ", rx.link("Create an account", href="/register"), size="2", color_scheme="gray"),
-            spacing="3", align="start", width="100%",
+        "Sign in", "Your assignments, study time and plan are yours alone. This browser stays signed in until you log out.",
+        rx.form(
+            rx.vstack(
+                form_field("Email", rx.input(name="email", value=s.auth_email, on_change=s.set_auth_email, type="email",
+                                             placeholder="you@school.edu", width="100%"), ""),
+                form_field("Password", rx.input(name="password", value=s.auth_password, on_change=s.set_auth_password,
+                                                type="password", width="100%"), ""),
+                auth_error(),
+                rx.button("Sign in", type="submit", size="3", width="100%"),
+                rx.text("New to StudyFlow? ", rx.link("Create an account", href="/register"), size="2", color_scheme="gray"),
+                spacing="3", align="start", width="100%",
+            ),
+            on_submit=s.login, width="100%",
         ),
     )
 
@@ -2120,18 +2217,21 @@ def login_page() -> rx.Component:
 def register_page() -> rx.Component:
     s = DashboardState
     return auth_shell(
-        "Create your account", "An email and a password of at least 8 characters. Nothing else is asked.",
-        rx.vstack(
-            form_field("Email", rx.input(value=s.auth_email, on_change=s.set_auth_email, type="email",
-                                         placeholder="you@school.edu", width="100%"), ""),
-            form_field("Password", rx.input(value=s.auth_password, on_change=s.set_auth_password, type="password",
-                                            width="100%"), ""),
-            form_field("Password again", rx.input(value=s.auth_confirm, on_change=s.set_auth_confirm, type="password",
-                                                  width="100%"), ""),
-            auth_error(),
-            rx.button("Create account", on_click=s.register, size="3", width="100%"),
-            rx.text("Already have one? ", rx.link("Sign in", href="/login"), size="2", color_scheme="gray"),
-            spacing="3", align="start", width="100%",
+        "Create your account", "An email and a password of at least 8 characters. You stay signed in on this browser.",
+        rx.form(
+            rx.vstack(
+                form_field("Email", rx.input(name="email", value=s.auth_email, on_change=s.set_auth_email, type="email",
+                                             placeholder="you@school.edu", width="100%"), ""),
+                form_field("Password", rx.input(name="password", value=s.auth_password, on_change=s.set_auth_password,
+                                                type="password", width="100%"), ""),
+                form_field("Password again", rx.input(name="confirm", value=s.auth_confirm, on_change=s.set_auth_confirm,
+                                                      type="password", width="100%"), ""),
+                auth_error(),
+                rx.button("Create account", type="submit", size="3", width="100%"),
+                rx.text("Already have one? ", rx.link("Sign in", href="/login"), size="2", color_scheme="gray"),
+                spacing="3", align="start", width="100%",
+            ),
+            on_submit=s.register, width="100%",
         ),
     )
 
