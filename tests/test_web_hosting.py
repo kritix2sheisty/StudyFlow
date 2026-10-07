@@ -41,6 +41,14 @@ def test_the_running_app_used_the_same_rule():
     assert web.app.api_transformer is not None
 
 
+def test_railway_toml_does_not_force_the_api_image_on_every_service():
+    """A second website service shares this repo; a pinned Dockerfile would keep shipping uvicorn."""
+    from pathlib import Path
+    text = (Path(web.__file__).resolve().parents[1] / "railway.toml").read_text()
+    assert "dockerfilePath" not in text
+    assert 'healthcheckPath = "/api/health"' not in text
+
+
 def test_the_web_container_is_reflex_and_does_not_ship_the_api_server():
     """A second host runs the website; the API stays the existing Dockerfile."""
     from pathlib import Path

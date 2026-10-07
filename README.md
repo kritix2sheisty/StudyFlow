@@ -223,12 +223,11 @@ The image sets `STUDYFLOW_TRUST_PROXY=1` so login limits follow each
 phone's address (`X-Forwarded-For`) rather than the host's reverse
 proxy. Leave that unset when you run the API on a laptop.
 
-`railway.toml` points Railway at the Dockerfile and `/api/health`. After
-the first deploy, attach a volume at `/data` in the Railway dashboard
-(the SQLite file lives there). Then set `EXPO_PUBLIC_API_URL` in the
-phone app to `https://<your-api-host>` with no trailing slash, rebuild
-or restart Expo with `-c`, and students can generate a plan from Today
-without being on your Wi-Fi.
+After the first API deploy, attach a volume at `/data` in the Railway
+dashboard (the SQLite file lives there). Then set `EXPO_PUBLIC_API_URL`
+in the phone app to `https://<your-api-host>` with no trailing slash,
+rebuild or restart Expo with `-c`, and students can generate a plan
+from Today without being on your Wi-Fi.
 
 ### Hosting the website against the hosted API
 
@@ -249,8 +248,10 @@ On the **existing API** service, add:
 On the **new website** service:
 
 1. New service → GitHub repo `StudyFlow` (same project as the API).
-2. Settings → Build → Dockerfile path: `Dockerfile.web`
-   (`railway.toml` still belongs to the API; override this service).
+2. Add a **variable** `RAILWAY_DOCKERFILE_PATH=Dockerfile.web`
+   (the dashboard Dockerfile field is overwritten by the repo if you
+   only set it there). A good deploy log says `caddy` / `reflex run`,
+   not `uvicorn running on`.
 3. Variables:
    - `STUDYFLOW_API_URL=https://<your-api-host>` (no trailing slash)
    - `STUDYFLOW_WEB_KEY` — identical to the API service

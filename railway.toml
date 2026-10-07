@@ -1,14 +1,12 @@
-# Railway: API-only container (this file). The website is a second
-# service that must set its Dockerfile path to Dockerfile.web so it
-# does not reuse this file. After first deploy, attach a volume at
-# /data so the SQLite file survives restarts, set TZ to the students'
-# timezone, and STUDYFLOW_WEB_KEY to the same value as the website.
-
-[build]
-builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile"
+# Shared by every Railway service that deploys this repo.
+# Do not pin Dockerfile or /api/health here: the website service would
+# inherit them and keep shipping the API.
+#
+# Per service, in the Railway dashboard:
+#   API:  Dockerfile path Dockerfile (or leave unset; auto-detects),
+#         health /api/health, volume /data, TZ, STUDYFLOW_WEB_KEY
+#   Web:  variable RAILWAY_DOCKERFILE_PATH=Dockerfile.web,
+#         health /_health, STUDYFLOW_API_URL, STUDYFLOW_WEB_KEY, TZ
 
 [deploy]
-healthcheckPath = "/api/health"
-healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
