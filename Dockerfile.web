@@ -27,8 +27,9 @@ RUN uv venv && uv pip install -r requirements.txt
 COPY . .
 
 ARG PORT API_URL
-RUN --mount=type=cache,target=/root/.bun/install/cache \
-    REFLEX_API_URL=${API_URL:-http://localhost:$PORT} reflex export --frontend-only --no-zip
+# No BuildKit cache mount: Railway rejects mounts that are not
+# id=s/<service-id>-... and fails validation before the build log starts.
+RUN REFLEX_API_URL=${API_URL:-http://localhost:$PORT} reflex export --frontend-only --no-zip
 
 FROM python:3.13-slim
 

@@ -55,6 +55,7 @@ def test_the_web_container_is_reflex_and_does_not_ship_the_api_server():
     root = Path(web.__file__).resolve().parents[1]
     text = (root / "Dockerfile.web").read_text()
     assert "reflex export" in text and "reflex run --env prod --backend-only" in text
+    assert "--mount=type=cache" not in text  # Railway rejects mounts without their cache id
     assert "api_server" not in text and "requirements-api.txt" not in text
     assert "STUDYFLOW_API_URL" in text  # documented as a runtime variable
     caddy = (root / "Caddyfile").read_text()
