@@ -234,34 +234,37 @@ without being on your Wi-Fi.
 
 The website is a client of the API whenever `STUDYFLOW_API_URL` is set;
 it then keeps no data of its own and mounts no API. So it can run on a
-host with no disk. Two variables on the web host:
+host with no disk. Students open the public website URL in a browser;
+they do not need your laptop.
 
-- `STUDYFLOW_API_URL=https://<your-api-host>`
-- `STUDYFLOW_WEB_KEY=<a long random string>`, set to the same value on
-  the API host, so the API applies login limits per browser rather than
-  to the website as a whole. Make one with
-  `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+`Dockerfile.web` and `Caddyfile` are the Reflex production image
+(frontend on `PORT`, backend events on 8000). It is a **second**
+Railway service from this same repo. Do not replace the API service's
+Dockerfile.
 
-Reflex Cloud's free tier hosts one app; from the project root:
+On the **existing API** service, add:
 
-```
-pip install --upgrade reflex-hosting-cli
-reflex login
-reflex deploy --app-name studyflow --hostname studyflow --env STUDYFLOW_API_URL=https://<your-api-host> --env STUDYFLOW_WEB_KEY=<the string> --env TZ=America/La_Paz --exclude-from-backend mobile --exclude-from-backend tests --exclude-from-backend data
-```
+- `STUDYFLOW_WEB_KEY` — the same long random string as on the website
 
-Fallback with no card: a Render free web service built from Reflex's
-official `docker-example/production` Dockerfile (Caddy in front of
-`reflex run --env prod --backend-only`; add `/api/*` to its backend
-route matcher). It sleeps after 15 idle minutes and takes about a minute
-to wake.
+On the **new website** service:
 
-To use the local website against the hosted API (so the laptop and the
-phone share one account), set this in the same terminal before `reflex run`:
+1. New service → GitHub repo `StudyFlow` (same project as the API).
+2. Settings → Build → Dockerfile path: `Dockerfile.web`
+   (`railway.toml` still belongs to the API; override this service).
+3. Variables:
+   - `STUDYFLOW_API_URL=https://<your-api-host>` (no trailing slash)
+   - `STUDYFLOW_WEB_KEY` — identical to the API service
+   - `TZ` — the students' timezone (image default `America/La_Paz`)
+4. Networking → Generate domain.
+5. Health check path: `/_health` (not `/api/health`; this container has no API).
+6. Open `https://<your-web-host>/`; sign in with the same account as the phone.
 
-```
-$env:STUDYFLOW_API_URL="https://<your-api-host>"
-```
+Make a web key with
+`python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+Keep it out of git (it lives in the gitignored `.env` on the laptop).
+
+Local `reflex run` still uses `.env` (`STUDYFLOW_API_URL` and
+`STUDYFLOW_WEB_KEY`) so your laptop matches production.
 
 A sign-in on the website is kept in this browser until the student logs
 out. Use the same email on the phone.

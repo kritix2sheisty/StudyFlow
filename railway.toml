@@ -1,6 +1,8 @@
-# Railway: API-only container. After first deploy, attach a volume at
+# Railway: API-only container (this file). The website is a second
+# service that must set its Dockerfile path to Dockerfile.web so it
+# does not reuse this file. After first deploy, attach a volume at
 # /data so the SQLite file survives restarts, set TZ to the students'
-# timezone, and (if the website is hosted separately) STUDYFLOW_WEB_KEY.
+# timezone, and STUDYFLOW_WEB_KEY to the same value as the website.
 
 [build]
 builder = "DOCKERFILE"
