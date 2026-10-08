@@ -6,9 +6,11 @@ it catches the errors that would stop reflex run before it serves
 anything.
 """
 
+from pathlib import Path
+
 from StudyFlow.StudyFlow import (
     DashboardState, app, assignments_page, focus_page, index, login_page, progress_page, register_page,
-    schedule_page,
+    schedule_page, share_site_url,
 )
 
 
@@ -26,7 +28,7 @@ def test_state_exposes_the_vars_the_pages_bind_to():
         "has_plan", "plan_stale", "plan_message", "plan_days", "today_plan", "plan_statuses",
         "plan_required", "plan_scheduled", "plan_unscheduled", "plan_completion", "progress_value",
         "authenticated", "user_email", "auth_email", "auth_password", "auth_confirm", "auth_error",
-        "saved_token", "import_available", "import_summary",
+        "saved_token", "import_available", "import_summary", "share_open",
     ):
         assert hasattr(DashboardState, name), name
 
@@ -34,3 +36,18 @@ def test_state_exposes_the_vars_the_pages_bind_to():
 def test_no_sample_data_module_remains():
     import importlib.util
     assert importlib.util.find_spec("StudyFlow.sample_data") is None
+
+
+def test_share_site_url_defaults_to_the_hosted_website(monkeypatch):
+    monkeypatch.delenv("STUDYFLOW_PUBLIC_URL", raising=False)
+    assert share_site_url() == "https://studyflow-production-d5e4.up.railway.app"
+    monkeypatch.setenv("STUDYFLOW_PUBLIC_URL", "https://studyflow.example/")
+    assert share_site_url() == "https://studyflow.example"
+
+
+def test_logo_and_share_qr_are_in_assets():
+    root = Path(__file__).resolve().parents[1] / "assets"
+    assert (root / "logo.png").read_bytes().startswith(b"\x89PNG")
+    assert (root / "favicon.ico").is_file()
+    qr = (root / "share-qr.svg").read_text(encoding="utf-8")
+    assert "<svg" in qr and "path" in qr

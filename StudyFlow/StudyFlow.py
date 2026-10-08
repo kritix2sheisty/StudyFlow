@@ -72,6 +72,10 @@ NAV_ITEMS = {"Dashboard": "/", "Assignments": "/assignments", "Schedule": "/sche
 # Shown wherever a plan would be, once its inputs have changed.
 STALE_MESSAGE = "Your study plan needs to be regenerated. Your {what} changed since it was made."
 
+# What classmates scan. Override with STUDYFLOW_PUBLIC_URL if the domain changes.
+def share_site_url() -> str:
+    return os.environ.get("STUDYFLOW_PUBLIC_URL", "https://studyflow-production-d5e4.up.railway.app").strip().rstrip("/")
+
 # Shared card styling: a subtle border that brightens on hover. No motion.
 CARD_STYLE = {
     "border": "1px solid var(--gray-5)",
@@ -112,6 +116,19 @@ class DashboardState(rx.State):
     auth_password: str = ""
     auth_confirm: str = ""
     auth_error: str = ""
+    share_open: bool = False
+
+    def set_share_open(self, value: bool):
+        self.share_open = bool(value)
+
+    def open_share(self):
+        self.share_open = True
+
+    def close_share(self):
+        self.share_open = False
+
+    def copy_share_link(self):
+        return [rx.set_clipboard(share_site_url()), rx.toast.success("Link copied.")]
 
     def _browser_ip(self) -> str:
         try:
@@ -757,42 +774,90 @@ def nav_link(label: str, href: str, active: bool = False) -> rx.Component:
     )
 
 
-def header(active: str = "Dashboard") -> rx.Component:
-    return rx.flex(
-        rx.hstack(
-            rx.box(
-                rx.icon("book_open", size=20, color="white"),
-                padding="2", border_radius="10px", background=rx.color("accent", 9),
-                display="flex", align_items="center",
-            ),
+BRAND_INDIGO = "#2B2F9D"
+BRAND_ORANGE = "#F5A83C"
+
+
+def brand_mark() -> rx.Component:
+    """The StudyFlow mark in the header corner."""
+    return rx.image(src="/logo.png", alt="StudyFlow", width="40px", height="40px")
+
+
+def wordmark() -> rx.Component:
+    """'Study' in the text colour, 'Flow' in brand indigo (orange on dark, as in the logo sheet)."""
+    return rx.heading(
+        "Study",
+        rx.text.span("Flow", color=rx.color_mode_cond(light=BRAND_INDIGO, dark=BRAND_ORANGE)),
+        size="6", line_height="1", weight="bold", letter_spacing="-0.01em",
+    )
+
+
+def share_dialog() -> rx.Component:
+    """QR and link so a student can open StudyFlow on their own computer."""
+    s = DashboardState
+    url = share_site_url()
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.dialog.title("Share StudyFlow"),
+            rx.dialog.description("Scan the code or copy the link. It opens the website, no app store needed.",
+                                  size="2"),
             rx.vstack(
-                rx.heading("StudyFlow", size="6", line_height="1"),
-                rx.text("Your Personal Study Planner", size="1", color_scheme="gray"),
-                spacing="1", align="start",
-            ),
-            align="center", spacing="3",
-        ),
-        rx.spacer(),
-        rx.hstack(
-            rx.flex(
-                *[nav_link(label, href, active=(label == active)) for label, href in NAV_ITEMS.items()],
-                spacing="2", wrap="wrap", align="center",
-                padding="1", border_radius="999px", background=rx.color("gray", 2),
-            ),
-            rx.cond(
-                DashboardState.authenticated,
-                rx.hstack(
-                    rx.text(DashboardState.user_email, size="1", color_scheme="gray"),
-                    rx.button("Log out", on_click=DashboardState.logout, size="1", variant="ghost", color_scheme="gray"),
-                    spacing="2", align="center",
+                rx.image(src="/share-qr.svg", alt="QR code for StudyFlow", width="12rem", height="12rem",
+                         style={"background": "white", "border_radius": "12px", "padding": "8px"}),
+                rx.text(url, size="2", color_scheme="gray", style={"overflow_wrap": "anywhere"}),
+                rx.flex(
+                    rx.button("Copy link", on_click=s.copy_share_link, size="3", width=TAP_WIDTH),
+                    rx.button("Done", variant="soft", color_scheme="gray", size="3", width=TAP_WIDTH,
+                              on_click=s.close_share),
+                    spacing="3", wrap="wrap", justify="center", width="100%",
                 ),
-                rx.link("Log in", href="/login", size="2", weight="medium"),
+                spacing="3", align="center", width="100%", padding_top="3",
             ),
-            rx.color_mode.button(size="2", variant="ghost"),
-            spacing="3", align="center",
+            max_width="24rem",
         ),
-        width="100%", align="center", wrap="wrap", spacing="4", padding_y="4",
-        border_bottom=f"1px solid {rx.color('gray', 4)}",
+        open=s.share_open,
+        on_open_change=s.set_share_open,
+    )
+
+
+def header(active: str = "Dashboard") -> rx.Component:
+    return rx.box(
+        rx.flex(
+            rx.hstack(
+                brand_mark(),
+                rx.vstack(
+                    wordmark(),
+                    rx.text("Plan smarter. Study better.", size="1", color_scheme="gray"),
+                    spacing="1", align="start",
+                ),
+                align="center", spacing="3",
+            ),
+            rx.spacer(),
+            rx.hstack(
+                rx.flex(
+                    *[nav_link(label, href, active=(label == active)) for label, href in NAV_ITEMS.items()],
+                    spacing="2", wrap="wrap", align="center",
+                    padding="1", border_radius="999px", background=rx.color("gray", 2),
+                ),
+                rx.button(rx.icon("qr_code", size=16), "Share", size="2", variant="soft",
+                          on_click=DashboardState.open_share),
+                rx.cond(
+                    DashboardState.authenticated,
+                    rx.hstack(
+                        rx.text(DashboardState.user_email, size="1", color_scheme="gray"),
+                        rx.button("Log out", on_click=DashboardState.logout, size="1", variant="ghost", color_scheme="gray"),
+                        spacing="2", align="center",
+                    ),
+                    rx.link("Log in", href="/login", size="2", weight="medium"),
+                ),
+                rx.color_mode.button(size="2", variant="ghost"),
+                spacing="3", align="center",
+            ),
+            width="100%", align="center", wrap="wrap", spacing="4", padding_y="4",
+            border_bottom=f"1px solid {rx.color('gray', 4)}",
+        ),
+        share_dialog(),
+        width="100%",
     )
 
 
