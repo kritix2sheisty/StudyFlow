@@ -76,15 +76,14 @@ STALE_MESSAGE = "Your study plan needs to be regenerated. Your {what} changed si
 def share_site_url() -> str:
     return os.environ.get("STUDYFLOW_PUBLIC_URL", "https://studyflow-production-d5e4.up.railway.app").strip().rstrip("/")
 
-# Shared card styling: a subtle border that brightens on hover. No motion.
+# Shared card styling: a soft shadow (studyflow.css) that deepens on hover. No motion.
 CARD_STYLE = {
-    "border": "1px solid var(--gray-5)",
-    "transition": "border-color 0.15s ease",
-    "_hover": {"border_color": "var(--gray-8)"},
+    "transition": "box-shadow 0.15s ease",
+    "_hover": {"box_shadow": "var(--sf-shadow-hover)"},
 }
 
 # Responsive helpers: phones get tighter spacing and smaller type.
-PAGE_PADDING_X = rx.breakpoints(initial="3", md="5")
+PAGE_PADDING_X = rx.breakpoints(initial="var(--space-3)", md="var(--space-5)")
 SECTION_GAP = rx.breakpoints(initial="6", md="8")
 GRID_GAP = rx.breakpoints(initial="3", md="4")
 BIG_NUMBER = rx.breakpoints(initial="6", md="8")
@@ -768,7 +767,7 @@ def nav_link(label: str, href: str, active: bool = False) -> rx.Component:
         label, href=href, size="2", weight="medium", underline="none",
         color="white" if active else rx.color("gray", 12),
         background=rx.color("accent", 9) if active else "transparent",
-        padding_x="4", padding_y="2", border_radius="999px",
+        padding_x="var(--space-4)", padding_y="var(--space-2)", border_radius="999px",
         white_space="nowrap", display="inline-block",
         style={} if active else {"_hover": {"background": rx.color("gray", 4)}},
     )
@@ -811,7 +810,7 @@ def share_dialog() -> rx.Component:
                               on_click=s.close_share),
                     spacing="3", wrap="wrap", justify="center", width="100%",
                 ),
-                spacing="3", align="center", width="100%", padding_top="3",
+                spacing="3", align="center", width="100%", padding_top="var(--space-3)",
             ),
             max_width="24rem",
         ),
@@ -833,28 +832,31 @@ def header(active: str = "Dashboard") -> rx.Component:
                 align="center", spacing="3",
             ),
             rx.spacer(),
-            rx.hstack(
+            # On a phone the nav is one row that scrolls sideways rather than a stacked blob.
+            rx.flex(
                 rx.flex(
                     *[nav_link(label, href, active=(label == active)) for label, href in NAV_ITEMS.items()],
-                    spacing="2", wrap="wrap", align="center",
-                    padding="1", border_radius="999px", background=rx.color("gray", 2),
+                    spacing="1", wrap="nowrap", align="center", max_width="100%", overflow_x="auto",
+                    padding="var(--space-1)", border_radius="999px", background="var(--color-panel-solid)",
+                    border=f"1px solid {rx.color('gray', 4)}", box_shadow="var(--sf-shadow)",
+                    style={"scrollbar_width": "none"},
                 ),
                 rx.button(rx.icon("qr_code", size=16), "Share", size="2", variant="soft",
                           on_click=DashboardState.open_share),
                 rx.cond(
                     DashboardState.authenticated,
                     rx.hstack(
-                        rx.text(DashboardState.user_email, size="1", color_scheme="gray"),
+                        rx.text(DashboardState.user_email, size="1", color_scheme="gray",
+                                display=rx.breakpoints(initial="none", md="block")),
                         rx.button("Log out", on_click=DashboardState.logout, size="1", variant="ghost", color_scheme="gray"),
                         spacing="2", align="center",
                     ),
                     rx.link("Log in", href="/login", size="2", weight="medium"),
                 ),
                 rx.color_mode.button(size="2", variant="ghost"),
-                spacing="3", align="center",
+                spacing="3", align="center", wrap="wrap", max_width="100%",
             ),
-            width="100%", align="center", wrap="wrap", spacing="4", padding_y="4",
-            border_bottom=f"1px solid {rx.color('gray', 4)}",
+            width="100%", align="center", wrap="wrap", spacing="4", padding_y="var(--space-5)",
         ),
         share_dialog(),
         width="100%",
@@ -875,7 +877,6 @@ def import_banner() -> rx.Component:
             ),
             icon="database", color_scheme="indigo", width="100%",
         ),
-        rx.box(),
     )
 
 
@@ -1067,20 +1068,23 @@ class FocusState(rx.State):
 # ---------------------------------------------------------------------
 
 def welcome() -> rx.Component:
-    return rx.flex(
+    """The branded hero (`.sf-hero` in studyflow.css): indigo, with the logo's orange dot."""
+    return rx.box(
         rx.vstack(
-            eyebrow(DashboardState.today_label),
+            rx.text(DashboardState.today_label, size="1", weight="bold", letter_spacing="0.12em",
+                    style={"text_transform": "uppercase", "opacity": "0.75"}),
             rx.heading(DashboardState.greeting, "! Here's your study overview.",
-                       size=rx.breakpoints(initial="6", md="8")),
+                       size=rx.breakpoints(initial="6", md="8"), line_height="1.15"),
             rx.text(
                 "StudyFlow keeps your assignments, deadlines and free time in one place, "
                 "and turns them into a study plan you can actually follow. "
                 "Add work and study time first, then generate the week.",
-                size=rx.breakpoints(initial="2", md="3"), color_scheme="gray", max_width="40em",
+                size=rx.breakpoints(initial="2", md="3"), max_width="40em", style={"opacity": "0.85"},
             ),
-            spacing="2", align="start",
+            spacing="3", align="start",
         ),
-        width="100%",
+        class_name="sf-hero", width="100%",
+        padding_x=rx.breakpoints(initial="var(--space-5)", md="var(--space-8)"), padding_y=rx.breakpoints(initial="var(--space-6)", md="var(--space-8)"),
     )
 
 
@@ -1100,7 +1104,7 @@ def overview_card(label: str, value: rx.Var, unit: str, hint: str, icon: str, co
                 rx.spacer(),
                 rx.box(
                     rx.icon(icon, size=16, color=rx.color(color, 9)),
-                    padding="1", border_radius="6px", background=rx.color(color, 3),
+                    padding="var(--space-1)", border_radius="6px", background=rx.color(color, 3),
                     display="flex", align_items="center",
                 ),
                 width="100%", align="center",
@@ -1119,10 +1123,10 @@ def overview_cards() -> rx.Component:
         # Count and required hours come from the assignment list; the
         # scheduled hours and completion come from the generated plan
         # and read 0 until one exists.
-        overview_card("Assignments", s.assignment_count, "", "active this week", "book_open", "blue"),
+        overview_card("Assignments", s.assignment_count, "", "active this week", "book_open", "indigo"),
         overview_card("Required", s.required_hours, "h", "of work remaining", "clock", "orange"),
         overview_card("Scheduled", s.plan_scheduled, "h", "placed in your plan", "calendar", "green"),
-        overview_card("Completion", s.plan_completion, "%", "of required work scheduled", "trending_up", "purple"),
+        overview_card("Completion", s.plan_completion, "%", "of required work scheduled", "trending_up", "iris"),
         columns=rx.breakpoints(initial="2", lg="4"),
         spacing=GRID_GAP, width="100%",
     )
@@ -1244,7 +1248,7 @@ def assignment_card(a: dict) -> rx.Component:
             rx.spacer(),
             risk_badge(a["risk"]),
             width="100%", align="center", wrap="wrap", spacing="3",
-            padding_x="4", padding_y="3",
+            padding_x="var(--space-4)", padding_y="var(--space-3)",
             background=rx.match(a["risk"], *RISK_TINTS.items(), "var(--gray-3)"),
         ),
         # Body: what it is. Long names wrap instead of overflowing.
@@ -1252,7 +1256,7 @@ def assignment_card(a: dict) -> rx.Component:
             rx.heading(a["name"], size="4", line_height="1.3", style={"overflow_wrap": "anywhere"}),
             rx.text(a["subject"], size="2", color_scheme="gray"),
             spacing="1", align="start", width="100%",
-            padding_x="4", padding_top="4", padding_bottom="3",
+            padding_x="var(--space-4)", padding_top="var(--space-4)", padding_bottom="var(--space-3)",
         ),
         # Footer: the detail, hours left and priority right, wrapping if tight.
         rx.flex(
@@ -1262,13 +1266,13 @@ def assignment_card(a: dict) -> rx.Component:
             rx.spacer(),
             priority_badge(a["priority"]),
             width="100%", align="center", wrap="wrap", spacing="3",
-            padding_x="4", padding_bottom="4",
+            padding_x="var(--space-4)", padding_bottom="var(--space-4)",
         ),
         width="100%",
-        background=rx.color("gray", 2),
-        border=f"1px solid {rx.color('gray', 5)}",
+        background="var(--color-panel-solid)",
+        border=f"1px solid {rx.color('gray', 4)}",
         border_left=rx.match(a["risk"], *RISK_BORDERS.items(), "4px solid var(--gray-6)"),
-        border_radius="12px", overflow="hidden",
+        border_radius="18px", overflow="hidden", box_shadow="var(--sf-shadow)",
         style=CARD_STYLE,
     )
 
@@ -1290,7 +1294,7 @@ def upcoming_assignments() -> rx.Component:
                     rx.text("No upcoming assignments yet.", weight="medium"),
                     rx.text("Add one with the button above and it will appear here.",
                             size="2", color_scheme="gray"),
-                    spacing="2", align="center", padding_y="6",
+                    spacing="2", align="center", padding_y="var(--space-6)",
                 ),
                 width="100%",
             ),
@@ -1323,7 +1327,7 @@ def plan_row(item: dict) -> rx.Component:
             rx.text(item["label"], size="3", weight="bold"),
         ),
         spacing="3", align="center", width="100%",
-        padding_x="3", padding_y="2", border_radius="8px",
+        padding_x="var(--space-3)", padding_y="var(--space-2)", border_radius="8px",
         background=rx.cond(is_break, rx.color("gray", 3), "transparent"),
     )
 
@@ -1342,7 +1346,7 @@ def todays_plan() -> rx.Component:
                     rx.vstack(
                         rx.text("Nothing is scheduled for today.", weight="medium"),
                         rx.text("See the Schedule page for the rest of the week.", size="2", color_scheme="gray"),
-                        spacing="1", align="center", padding_y="4", width="100%",
+                        spacing="1", align="center", padding_y="var(--space-4)", width="100%",
                     ),
                 ),
                 rx.vstack(
@@ -1351,7 +1355,7 @@ def todays_plan() -> rx.Component:
                     rx.text(rx.cond(s.plan_stale, s.plan_message,
                                     "Press Generate Study Plan to place your work into your study time."),
                             size="2", color_scheme="gray", text_align="center"),
-                    spacing="1", align="center", padding_y="4", width="100%",
+                    spacing="1", align="center", padding_y="var(--space-4)", width="100%",
                 ),
             ),
             size="3", width="100%",
@@ -1448,7 +1452,7 @@ def assignment_form() -> rx.Component:
             rx.cond(
                 s.form_save_error != "",
                 rx.callout(s.form_save_error, icon="triangle_alert", color_scheme="red", size="1",
-                           margin_top="3"),
+                           margin_top="var(--space-3)"),
             ),
             rx.vstack(
                 form_field("Assignment name",
@@ -1480,9 +1484,9 @@ def assignment_form() -> rx.Component:
                     rx.button(rx.cond(s.is_editing, rx.icon("check", size=18), rx.icon("plus", size=18)),
                               rx.cond(s.is_editing, "Save changes", "Add Assignment"), size="3",
                               width=TAP_WIDTH, on_click=s.submit_form),
-                    spacing="3", wrap="wrap", justify="end", width="100%", padding_top="2",
+                    spacing="3", wrap="wrap", justify="end", width="100%", padding_top="var(--space-2)",
                 ),
-                spacing="4", width="100%", padding_top="3",
+                spacing="4", width="100%", padding_top="var(--space-3)",
             ),
             max_width="480px",
         ),
@@ -1552,7 +1556,7 @@ def delete_dialog() -> rx.Component:
                           on_click=s.cancel_delete),
                 rx.button(rx.icon("trash_2", size=18), "Delete", color_scheme="red", size="3", width=TAP_WIDTH,
                           on_click=s.confirm_delete),
-                spacing="3", wrap="wrap", justify="end", width="100%", padding_top="4",
+                spacing="3", wrap="wrap", justify="end", width="100%", padding_top="var(--space-4)",
             ),
             max_width="420px",
         ),
@@ -1587,18 +1591,18 @@ def assignments_page() -> rx.Component:
                             rx.icon("inbox", size=28, color=rx.color("gray", 9)),
                             rx.text("No upcoming assignments.", weight="medium"),
                             rx.button(rx.icon("plus", size=18), "Add Assignment", size="3", on_click=s.open_form),
-                            spacing="3", align="center", padding_y="6",
+                            spacing="3", align="center", padding_y="var(--space-6)",
                         ),
                         width="100%",
                     ),
                 ),
-                spacing=SECTION_GAP, width="100%", padding_bottom="9",
+                spacing=SECTION_GAP, width="100%", padding_bottom="var(--space-9)",
             ),
             size="4", padding_x=PAGE_PADDING_X,
         ),
         assignment_form(),
         delete_dialog(),
-        background=rx.color("gray", 1), min_height="100vh",
+        min_height="100vh",
     )
 
 
@@ -1614,7 +1618,7 @@ def slot_row(slot: dict) -> rx.Component:
             rx.hstack(
                 rx.box(
                     rx.icon("clock", size=16, color=rx.color("accent", 9)),
-                    padding="2", border_radius="8px", background=rx.color("accent", 3),
+                    padding="var(--space-2)", border_radius="8px", background=rx.color("accent", 3),
                     display="flex", align_items="center",
                 ),
                 rx.vstack(
@@ -1657,7 +1661,7 @@ def study_time_section() -> rx.Component:
                         rx.text("No study time added yet.", weight="medium"),
                         rx.text("Add at least one weekly block so a plan has hours to fill.",
                                 size="2", color_scheme="gray", text_align="center"),
-                        spacing="2", align="center", padding_y="5",
+                        spacing="2", align="center", padding_y="var(--space-5)",
                     ),
                     width="100%",
                 ),
@@ -1678,7 +1682,7 @@ def slot_form() -> rx.Component:
             rx.dialog.description("A weekly period when you are free to study.", size="2"),
             rx.cond(
                 s.slot_save_error != "",
-                rx.callout(s.slot_save_error, icon="triangle_alert", color_scheme="red", size="1", margin_top="3"),
+                rx.callout(s.slot_save_error, icon="triangle_alert", color_scheme="red", size="1", margin_top="var(--space-3)"),
             ),
             rx.vstack(
                 form_field("Day",
@@ -1701,9 +1705,9 @@ def slot_form() -> rx.Component:
                               on_click=s.close_slot_form),
                     rx.button(rx.icon("plus", size=18), "Add Study Time", size="3", width=TAP_WIDTH,
                               on_click=s.submit_slot_form),
-                    spacing="3", wrap="wrap", justify="end", width="100%", padding_top="2",
+                    spacing="3", wrap="wrap", justify="end", width="100%", padding_top="var(--space-2)",
                 ),
-                spacing="4", width="100%", padding_top="3",
+                spacing="4", width="100%", padding_top="var(--space-3)",
             ),
             max_width="440px",
         ),
@@ -1727,7 +1731,7 @@ def slot_delete_dialog() -> rx.Component:
                           on_click=s.cancel_delete_slot),
                 rx.button(rx.icon("trash_2", size=18), "Remove", color_scheme="red", size="3", width=TAP_WIDTH,
                           on_click=s.confirm_delete_slot),
-                spacing="3", wrap="wrap", justify="end", width="100%", padding_top="4",
+                spacing="3", wrap="wrap", justify="end", width="100%", padding_top="var(--space-4)",
             ),
             max_width="420px",
         ),
@@ -1757,7 +1761,7 @@ def block_line(b: Block) -> rx.Component:
             rx.text(b.label, size="3", weight="bold"),
         ),
         spacing="3", align="center", width="100%",
-        padding_x="3", padding_y="2", border_radius="8px",
+        padding_x="var(--space-3)", padding_y="var(--space-2)", border_radius="8px",
         background=rx.cond(is_break, rx.color("gray", 3), "transparent"),
     )
 
@@ -1791,7 +1795,7 @@ def status_line(row: StatusRow) -> rx.Component:
             spacing="2", wrap="wrap",
         ),
         width="100%", align="center", wrap="wrap", spacing="3",
-        padding_y="2", border_bottom=f"1px solid {rx.color('gray', 4)}",
+        padding_y="var(--space-2)", border_bottom=f"1px solid {rx.color('gray', 4)}",
     )
 
 
@@ -1840,16 +1844,16 @@ def schedule_page() -> rx.Component:
                             rx.text(rx.cond(s.plan_message != "", s.plan_message,
                                             "Generate one and your week will appear here."),
                                     size="2", color_scheme="gray", text_align="center"),
-                            spacing="2", align="center", padding_y="6",
+                            spacing="2", align="center", padding_y="var(--space-6)",
                         ),
                         width="100%",
                     ),
                 ),
-                spacing=SECTION_GAP, width="100%", padding_bottom="9",
+                spacing=SECTION_GAP, width="100%", padding_bottom="var(--space-9)",
             ),
             size="4", padding_x=PAGE_PADDING_X,
         ),
-        background=rx.color("gray", 1), min_height="100vh",
+        min_height="100vh",
     )
 
 
@@ -1930,7 +1934,7 @@ def risk_line(row: StatusRow) -> rx.Component:
         rx.spacer(),
         rx.badge(row.risk, variant="soft", radius="full",
                  color_scheme=rx.match(row.risk, *RISK_COLORS.items(), "gray")),
-        spacing="3", align="center", width="100%", padding_y="2",
+        spacing="3", align="center", width="100%", padding_y="var(--space-2)",
         border_bottom=f"1px solid {rx.color('gray', 4)}",
     )
 
@@ -1950,7 +1954,7 @@ def progress_page() -> rx.Component:
             rx.icon("inbox", size=28, color=rx.color("gray", 9)),
             rx.text("No progress to show yet.", weight="medium"),
             rx.button(rx.icon("plus", size=18), "Add Assignment", size="3", on_click=s.open_form),
-            spacing="3", align="center", padding_y="6",
+            spacing="3", align="center", padding_y="var(--space-6)",
         ),
         width="100%",
     )
@@ -1961,7 +1965,7 @@ def progress_page() -> rx.Component:
                             "Generate a study plan to see your progress."), weight="medium"),
             rx.cond(s.plan_stale, rx.text(s.plan_message, size="2", color_scheme="gray", text_align="center")),
             rx.button(rx.icon("sparkles", size=18), "Generate Study Plan", size="3", on_click=s.generate_study_plan),
-            spacing="3", align="center", padding_y="6",
+            spacing="3", align="center", padding_y="var(--space-6)",
         ),
         width="100%",
     )
@@ -2000,12 +2004,12 @@ def progress_page() -> rx.Component:
                     rx.cond(s.has_plan, with_plan, no_plan),
                     no_assignments,
                 ),
-                spacing=SECTION_GAP, width="100%", padding_bottom="9",
+                spacing=SECTION_GAP, width="100%", padding_bottom="var(--space-9)",
             ),
             size="4", padding_x=PAGE_PADDING_X,
         ),
         assignment_form(),
-        background=rx.color("gray", 1), min_height="100vh",
+        min_height="100vh",
     )
 
 
@@ -2031,14 +2035,14 @@ def index() -> rx.Component:
                     columns=rx.breakpoints(initial="1", lg="2"),
                     spacing=SECTION_GAP, width="100%",
                 ),
-                spacing=SECTION_GAP, width="100%", padding_bottom="9",
+                spacing=SECTION_GAP, width="100%", padding_bottom="var(--space-9)",
             ),
             size="4", padding_x=PAGE_PADDING_X,
         ),
         assignment_form(),   # the dialogs; invisible until their open flags are True
         slot_form(),
         slot_delete_dialog(),
-        background=rx.color("gray", 1), min_height="100vh",
+        min_height="100vh",
     )
 
 
@@ -2053,8 +2057,17 @@ def api_transformer_for_this_host():
     return create_api()
 
 
+FONTS_URL = ("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700"
+             "&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap")
+
 app = rx.App(
     theme=rx.theme(accent_color="indigo", gray_color="slate", radius="large", scaling="100%"),
+    stylesheets=["/studyflow.css"],
+    head_components=[
+        rx.el.link(rel="preconnect", href="https://fonts.googleapis.com"),
+        rx.el.link(rel="preconnect", href="https://fonts.gstatic.com", cross_origin=""),
+        rx.el.link(rel="stylesheet", href=FONTS_URL),
+    ],
     api_transformer=api_transformer_for_this_host(),
 )
 
@@ -2096,8 +2109,8 @@ def focus_page() -> rx.Component:
                 rx.text("Up next", size="1", weight="bold", color_scheme="gray", letter_spacing="0.08em"),
                 rx.text(f.next_label, size="4", weight="medium"),
                 rx.text(f.next_time, size="2", color_scheme="gray"),
-                spacing="1", align="center", padding_top="7",
-                border_top=f"1px solid {rx.color('gray', 4)}", width="100%", margin_top="8",
+                spacing="1", align="center", padding_top="var(--space-7)",
+                border_top=f"1px solid {rx.color('gray', 4)}", width="100%", margin_top="var(--space-8)",
             ),
             rx.box(),
         )
@@ -2215,11 +2228,11 @@ def focus_page() -> rx.Component:
                 header(active="Focus"),
                 rx.center(
                     rx.box(body, width="100%", max_width="40rem"),
-                    width="100%", padding_y=rx.breakpoints(initial="8", md="9"), min_height="60vh",
+                    width="100%", padding_y=rx.breakpoints(initial="var(--space-8)", md="var(--space-9)"), min_height="60vh",
                 ),
-                spacing=SECTION_GAP, width="100%", padding_bottom="9",
+                spacing=SECTION_GAP, width="100%", padding_bottom="var(--space-9)",
             ),
-            size="4", padding_x=rx.breakpoints(initial="4", md="6"),
+            size="4", padding_x=rx.breakpoints(initial="var(--space-4)", md="var(--space-6)"),
         ),
         width="100%", min_height="100vh",
     )
@@ -2244,9 +2257,9 @@ def auth_shell(title: str, subtitle: str, body: rx.Component) -> rx.Component:
                         body,
                         spacing="5", align="start", width="100%", max_width="24rem",
                     ),
-                    width="100%", padding_y="9",
+                    width="100%", padding_y="var(--space-9)",
                 ),
-                spacing=SECTION_GAP, width="100%", padding_bottom="9",
+                spacing=SECTION_GAP, width="100%", padding_bottom="var(--space-9)",
             ),
             size="4", padding_x=PAGE_PADDING_X,
         ),

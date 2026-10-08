@@ -1,0 +1,213 @@
+/*
+ * StudyFlow brand theme, from the logo sheet: indigo #2B2F9D, navy
+ * #15193F, orange #F5A83C, paper #F6F7FB. Radix reads every colour
+ * through --indigo-* (accent) and --slate-* (gray), so redefining those
+ * scales on the theme root rebrands buttons, badges, cards and text at
+ * once. The `html` prefix outranks Radix's own `.radix-themes` rules
+ * regardless of stylesheet order.
+ */
+
+html .radix-themes {
+  --default-font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --heading-font-family: "Fraunces", Georgia, "Times New Roman", serif;
+  --heading-letter-spacing: -0.01em;
+  --sf-orange: #F5A83C;
+  --sf-shadow: 0 1px 2px rgba(22, 24, 63, 0.04), 0 10px 30px -14px rgba(22, 24, 63, 0.18);
+  --sf-shadow-hover: 0 2px 4px rgba(22, 24, 63, 0.06), 0 18px 40px -16px rgba(22, 24, 63, 0.26);
+
+  --indigo-1: #FBFBFF;
+  --indigo-2: #F5F6FE;
+  --indigo-3: #ECEDFC;
+  --indigo-4: #E1E3FA;
+  --indigo-5: #D4D6F7;
+  --indigo-6: #C3C6F1;
+  --indigo-7: #ABAEE8;
+  --indigo-8: #8C90DA;
+  --indigo-9: #2B2F9D;
+  --indigo-10: #24288C;
+  --indigo-11: #3438B0;
+  --indigo-12: #191C5A;
+  --indigo-a1: #0000ff04;
+  --indigo-a2: #001ae60a;
+  --indigo-a3: #000dd713;
+  --indigo-a4: #0011d41e;
+  --indigo-a5: #000cd02b;
+  --indigo-a6: #000dc43c;
+  --indigo-a7: #0009b954;
+  --indigo-a8: #0009ad73;
+  --indigo-a9: #000589d4;
+  --indigo-a10: #000579db;
+  --indigo-a11: #00059ccb;
+  --indigo-a12: #000348e6;
+  --indigo-contrast: #FFFFFF;
+  --indigo-surface: #F5F6FECC;
+  --indigo-indicator: var(--indigo-9);
+  --indigo-track: var(--indigo-9);
+
+  --slate-1: #FCFCFE;
+  --slate-2: #F6F7FB;
+  --slate-3: #EDEFF6;
+  --slate-4: #E5E7F0;
+  --slate-5: #DDE0EA;
+  --slate-6: #D3D6E3;
+  --slate-7: #C3C7D7;
+  --slate-8: #A9AEC4;
+  --slate-9: #7D839C;
+  --slate-10: #737891;
+  --slate-11: #5A5F78;
+  --slate-12: #16183F;
+  --slate-a1: #0000aa03;
+  --slate-a2: #001c8e09;
+  --slate-a3: #001c8012;
+  --slate-a4: #00146c1a;
+  --slate-a5: #00166222;
+  --slate-a6: #00115d2c;
+  --slate-a7: #0011553c;
+  --slate-a8: #000f5056;
+  --slate-a9: #000c3d82;
+  --slate-a10: #0009378c;
+  --slate-a11: #00082ea5;
+  --slate-a12: #00022de9;
+
+  --color-background: #F6F7FB;
+  --color-panel-solid: #FFFFFF;
+}
+
+html.dark .radix-themes,
+html .radix-themes.dark,
+html .dark-theme {
+  --sf-shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 12px 32px -16px rgba(0, 0, 0, 0.6);
+  --sf-shadow-hover: 0 2px 4px rgba(0, 0, 0, 0.3), 0 20px 44px -16px rgba(0, 0, 0, 0.7);
+
+  --indigo-1: #0F1130;
+  --indigo-2: #13163A;
+  --indigo-3: #1B1F52;
+  --indigo-4: #212666;
+  --indigo-5: #282E78;
+  --indigo-6: #31378A;
+  --indigo-7: #3C43A3;
+  --indigo-8: #4A52C4;
+  --indigo-9: #4F55D6;
+  --indigo-10: #5D63E3;
+  --indigo-11: #A8ADFF;
+  --indigo-12: #DFE1FF;
+  --indigo-a1: #ff113001;
+  --indigo-a2: #7678ff0c;
+  --indigo-a3: #5d66ff2a;
+  --indigo-a4: #5762ff43;
+  --indigo-a5: #5964ff59;
+  --indigo-a6: #5e68ff6f;
+  --indigo-a7: #616bff8e;
+  --indigo-a8: #626cffb6;
+  --indigo-a9: #5f66ffcc;
+  --indigo-a10: #6970ffdd;
+  --indigo-a11: #a8adffff;
+  --indigo-a12: #dfe1ffff;
+  --indigo-surface: #13163A80;
+
+  --slate-1: #0E1130;
+  --slate-2: #141838;
+  --slate-3: #1B2045;
+  --slate-4: #212650;
+  --slate-5: #282E5B;
+  --slate-6: #313767;
+  --slate-7: #3E4579;
+  --slate-8: #535B94;
+  --slate-9: #6A719F;
+  --slate-10: #777EAB;
+  --slate-11: #B2B6D3;
+  --slate-12: #EDEEF7;
+  --slate-a1: #00000000;
+  --slate-a2: #a9c6ff0a;
+  --slate-a3: #8ea5ff1a;
+  --slate-a4: #8999ff27;
+  --slate-a5: #8b9dff35;
+  --slate-a6: #92a0ff44;
+  --slate-a7: #96a4ff5a;
+  --slate-a8: #9daaff7b;
+  --slate-a9: #bac4ff89;
+  --slate-a10: #bfc8ff98;
+  --slate-a11: #dee3ffc9;
+  --slate-a12: #f6f7fff5;
+
+  --color-background: #0E1130;
+  --color-panel-solid: #161A3D;
+  --color-panel-translucent: rgba(22, 26, 61, 0.8);
+  --color-surface: rgba(27, 32, 69, 0.6);
+}
+
+/* Page: paper with a soft indigo glow from the top corner, navy at night. */
+html .radix-themes[data-is-root-theme="true"] {
+  background:
+    radial-gradient(900px 480px at 0% -10%, rgba(43, 47, 157, 0.10), transparent 70%),
+    radial-gradient(700px 420px at 100% 0%, rgba(245, 168, 60, 0.08), transparent 70%),
+    var(--color-background);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+}
+
+html.dark .radix-themes[data-is-root-theme="true"],
+html .radix-themes.dark[data-is-root-theme="true"] {
+  background:
+    radial-gradient(900px 520px at 0% -10%, rgba(79, 85, 214, 0.28), transparent 70%),
+    radial-gradient(700px 420px at 100% 0%, rgba(245, 168, 60, 0.07), transparent 70%),
+    var(--color-background);
+  background-attachment: fixed;
+}
+
+html .radix-themes .rt-Heading {
+  font-family: var(--heading-font-family);
+  letter-spacing: var(--heading-letter-spacing);
+}
+
+/* Cards float on the paper instead of sitting in outlined boxes. */
+html .radix-themes .rt-Card {
+  --card-border-radius: 18px;
+  background: var(--color-panel-solid);
+  box-shadow: var(--sf-shadow);
+}
+html .radix-themes .rt-Card::after,
+html .radix-themes .rt-Card::before {
+  box-shadow: inset 0 0 0 1px var(--gray-a4);
+}
+
+html .radix-themes .rt-Button:where(.rt-variant-solid) {
+  box-shadow: 0 6px 16px -8px var(--accent-9);
+  font-weight: 600;
+}
+
+html .radix-themes .rt-TextFieldRoot,
+html .radix-themes .rt-TextAreaRoot,
+html .radix-themes .rt-SelectTrigger {
+  background-color: var(--color-panel-solid);
+}
+
+html .radix-themes .rt-DialogContent {
+  border-radius: 20px;
+}
+
+/* The dashboard hero: brand indigo with the logo's orange dot. */
+.sf-hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: 24px;
+  color: #FFFFFF;
+  background:
+    radial-gradient(420px 260px at 100% 0%, rgba(245, 168, 60, 0.35), transparent 70%),
+    linear-gradient(135deg, #2B2F9D 0%, #3A3FC4 55%, #4F55D6 100%);
+  box-shadow: 0 24px 48px -24px rgba(43, 47, 157, 0.6);
+}
+.sf-hero::after {
+  content: "";
+  position: absolute;
+  right: 24px;
+  top: 24px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--sf-orange);
+}
+.sf-hero .rt-Heading,
+.sf-hero .rt-Text {
+  color: inherit;
+}

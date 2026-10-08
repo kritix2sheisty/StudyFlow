@@ -51,3 +51,16 @@ def test_logo_and_share_qr_are_in_assets():
     assert (root / "favicon.ico").is_file()
     qr = (root / "share-qr.svg").read_text(encoding="utf-8")
     assert "<svg" in qr and "path" in qr
+
+
+def test_brand_theme_stylesheet_is_loaded():
+    css = (Path(__file__).resolve().parents[1] / "assets" / "studyflow.css").read_text(encoding="utf-8")
+    assert "--indigo-9: #2B2F9D" in css and "Fraunces" in css and ".sf-hero" in css
+    assert "/studyflow.css" in app.stylesheets
+
+
+def test_padding_and_margin_use_units():
+    # Emotion passes "4" through as-is, which the browser drops; Radix space tokens need var(--space-4).
+    import re
+    src = (Path(__file__).resolve().parents[1] / "StudyFlow" / "StudyFlow.py").read_text(encoding="utf-8")
+    assert not re.search(r'\b(?:padding|margin)\w*=(?:"\d"|rx\.breakpoints\([^)]*"\d")', src)
