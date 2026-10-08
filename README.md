@@ -1,10 +1,42 @@
-# StudyFlow — AI Student Scheduler
+<p align="center">
+  <img src="assets/logo.png" alt="StudyFlow logo" width="96">
+</p>
 
-StudyFlow is a student-focused scheduling application designed to help students organize their academic workload and make better decisions about what to study next.
+<h1 align="center">StudyFlow</h1>
+<p align="center"><strong>Plan smarter. Study better.</strong></p>
 
-The project currently uses a Python command-line interface and includes functionality for managing classes, assignments, tests, and available study time. It also includes a prioritization system that evaluates assignments based on factors such as due date, priority, estimated effort, and completion status.
+StudyFlow is a student-focused scheduling application that helps students organize their academic workload and decide what to study next. Students add their assignments and the times they are free to study, and StudyFlow builds a week of study sessions that lands every piece of work before its due date, flagging anything at risk.
 
-The project is being developed in multiple phases, with the goal of eventually generating personalized study schedules and incorporating AI-assisted recommendations.
+## Use StudyFlow
+
+**Website:** [studyflow-production-d5e4.up.railway.app](https://studyflow-production-d5e4.up.railway.app)
+
+Open it in any browser on a computer or phone. There is nothing to install. Scan the code to open it on your phone:
+
+<p align="center">
+  <a href="https://studyflow-production-d5e4.up.railway.app">
+    <img src="assets/share-qr.svg" alt="QR code for the StudyFlow website" width="200">
+  </a>
+</p>
+
+### Getting started
+
+1. **Create an account** with your email and a password (8 characters or more). The browser keeps you signed in until you log out, and the same account works on the phone app.
+2. **Add your assignments**: name, subject, due date, estimated hours and priority.
+3. **Add when you can study**: recurring weekly blocks such as Monday 4–6 PM. StudyFlow never invents free time.
+4. **Generate your study plan.** StudyFlow places the work into your study time, before each due date, and tells you if anything will not fit.
+
+### What's in the app
+
+| Page | What it does |
+| --- | --- |
+| Dashboard | Today's overview: assignment count, hours required and scheduled, upcoming work by urgency, your study times and today's plan |
+| Assignments | Add, edit, complete and delete assignments |
+| Schedule | The generated week, day by day, with each assignment's scheduling status |
+| Progress | Overall completion, per-assignment progress, deadline risk and finished work |
+| Focus | One study session at a time with a countdown timer and breaks |
+
+The **Share** button in the header opens the QR code and a copy-link button so classmates can open StudyFlow too.
 
 ## Current Progress
 
@@ -94,11 +126,19 @@ module docstring of `scheduler.py`.
 * Deadline risk ratio: `deadline_risk_ratio()` divides that available time by the hours an assignment still needs (0.5 means half the time needed; infinity means nothing left to do)
 * Risk level: `risk_level()` turns the ratio into CRITICAL (under 1), HIGH (1 to 1.5), MODERATE (1.5 to 2) or LOW (2 and above)
 
+### Phase 5 — Web app, accounts and hosting
+
+* Reflex website with Dashboard, Assignments, Schedule, Progress and Focus pages
+* Student accounts: each student's assignments, study time and plan are private; sign-in persists in the browser
+* HTTP API (`api/`) shared by the website and the phone app
+* Expo phone app (`mobile/`) that can generate and refresh the plan
+* Hosted on Railway: the API (with its SQLite database on a volume) and the public website run as two services
+* Branded design: StudyFlow logo, QR share dialog, light and dark themes
+
 ### Future Development
 
-* Show assignment status and deadline risk in the study plan report
 * Improve schedule optimization (spread work evenly, cap hours per day)
-* Add a graphical/web interface
+* iPhone build of the mobile app (needs the Apple Developer Program)
 * Introduce AI-assisted study recommendations
 
 ## Scheduling Algorithm
@@ -131,6 +171,32 @@ than spread evenly across the days before a deadline. Breaks can leave a few
 minutes unused. There is no cap on hours per day and no preference for
 variety. Future versions may explore more advanced scheduling and
 optimization techniques once StudyFlow defines what "better" means.
+
+## Running the website locally
+
+```
+pip install -r requirements.txt
+reflex run
+```
+
+Then open http://localhost:3000. Without a `.env`, the website keeps its own SQLite database in `data/` and serves the API itself. With a `.env` that sets `STUDYFLOW_API_URL` and `STUDYFLOW_WEB_KEY` (see *Hosting the website* below), your laptop uses the hosted API and the same accounts as the public site.
+
+The original command-line version is still available with `python main.py`.
+
+## Design
+
+The look follows the logo sheet:
+
+| | |
+| --- | --- |
+| Indigo (primary) | `#2B2F9D` |
+| Navy (text, dark mode background) | `#15193F` |
+| Orange (accent) | `#F5A83C` |
+| Paper (light background) | `#F6F7FB` |
+| Headings | [Fraunces](https://fonts.google.com/specimen/Fraunces) |
+| Body text | [Inter](https://fonts.google.com/specimen/Inter) |
+
+`assets/studyflow.css` holds the theme. It redefines the Radix indigo and slate colour scales, so every button, badge and card picks up the brand colours in both light and dark mode. `assets/logo.png` is the app icon and `assets/share-qr.svg` is the QR code for the public website. If the website moves, regenerate the QR code (for example with the `segno` package) and set `STUDYFLOW_PUBLIC_URL` so the Share dialog shows the new link.
 
 ## Running the tests
 
@@ -299,8 +365,10 @@ the project and open it in Expo Go, signed in.
 
 * Python
 * SQLite
-* Reflex *(planned/under development)*
+* Reflex *(website)*
+* Starlette *(HTTP API, `api/`)*
 * React Native with Expo *(mobile client, in `mobile/`)*
+* Docker, Caddy and Railway *(hosting)*
 * Algorithms and data structures
 * AI/LLM integration *(future phase)*
 
