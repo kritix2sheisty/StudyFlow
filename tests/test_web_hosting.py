@@ -72,5 +72,5 @@ def test_the_web_container_is_reflex_and_does_not_ship_the_api_server():
     assert "api_server" not in text and "requirements-api.txt" not in text
     assert "STUDYFLOW_API_URL" in text  # documented as a runtime variable
     caddy = (root / "Caddyfile").read_text()
-    assert "/_event" in caddy and "/_health" in caddy
+    assert "/_event" in caddy and "/_health" in caddy and "/api/*" in caddy
     assert "localhost:8000" in caddy

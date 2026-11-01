@@ -9,14 +9,12 @@ StudyFlow is a student-focused scheduling application that helps students organi
 
 ## Use StudyFlow
 
-**Website:** moving to Heroku. The Railway address below is offline until that deploy is finished. The steps are in [Hosting on Heroku](#hosting-on-heroku-current).
-
-[studyflow-production-d5e4.up.railway.app](https://studyflow-production-d5e4.up.railway.app)
+**Website:** [studyflow-josiah-f2a2551f4e3b.herokuapp.com](https://studyflow-josiah-f2a2551f4e3b.herokuapp.com)
 
 Open it in any browser on a computer or phone. There is nothing to install. Scan the code to open it on your phone:
 
 <p align="center">
-  <a href="https://studyflow-production-d5e4.up.railway.app">
+  <a href="https://studyflow-josiah-f2a2551f4e3b.herokuapp.com">
     <img src="assets/share-qr.svg" alt="QR code for the StudyFlow website" width="200">
   </a>
 </p>
