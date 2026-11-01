@@ -1,0 +1,8 @@
+# Heroku container build. The stack must be `container` or Heroku
+# ignores this file and tries a Python buildpack. One web process runs
+# the website and the API together (Dockerfile.web). Do not add a
+# worker, a second web dyno, or a larger database: the student credit
+# covers one Basic dyno and one Essential-0 Postgres, and nothing more.
+build:
+  docker:
+    web: Dockerfile.web

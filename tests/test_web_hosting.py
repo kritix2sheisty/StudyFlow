@@ -49,6 +49,19 @@ def test_railway_toml_does_not_force_the_api_image_on_every_service():
     assert 'healthcheckPath = "/api/health"' not in text
 
 
+def test_heroku_builds_the_website_image_on_the_container_stack():
+    """One Basic dyno and Essential-0 Postgres stay inside the $13 student credit."""
+    from pathlib import Path
+    root = Path(web.__file__).resolve().parents[1]
+    yml = (root / "heroku.yml").read_text()
+    assert "Dockerfile.web" in yml
+    manifest = (root / "app.json").read_text()
+    assert '"stack": "container"' in manifest
+    assert "heroku-postgresql:essential-0" in manifest
+    assert '"size": "basic"' in manifest
+    assert "standard-" not in manifest
+
+
 def test_the_web_container_is_reflex_and_does_not_ship_the_api_server():
     """A second host runs the website; the API stays the existing Dockerfile."""
     from pathlib import Path

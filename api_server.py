@@ -11,10 +11,15 @@ are created before the first request. The routes are exactly the ones
 the Reflex app mounts; nothing is added or changed here.
 """
 
+import os
+
 import storage
 from api import create_api
 
-storage.set_db_path(storage.default_db_path())
+# DATABASE_URL means this host has Postgres (Heroku). Otherwise the
+# SQLite file, wherever STUDYFLOW_DB_PATH points.
+if not os.environ.get("DATABASE_URL", "").strip():
+    storage.set_db_path(storage.default_db_path())
 storage.init_db()
 
 app = create_api()

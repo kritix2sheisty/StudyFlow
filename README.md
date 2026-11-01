@@ -9,7 +9,9 @@ StudyFlow is a student-focused scheduling application that helps students organi
 
 ## Use StudyFlow
 
-**Website:** [studyflow-production-d5e4.up.railway.app](https://studyflow-production-d5e4.up.railway.app)
+**Website:** moving to Heroku. The Railway address below is offline until that deploy is finished. The steps are in [Hosting on Heroku](#hosting-on-heroku-current).
+
+[studyflow-production-d5e4.up.railway.app](https://studyflow-production-d5e4.up.railway.app)
 
 Open it in any browser on a computer or phone. There is nothing to install. Scan the code to open it on your phone:
 
@@ -250,6 +252,43 @@ Notes:
 * Expo Go allows plain `http://` to the laptop. A standalone build later will
   need cleartext traffic enabled on Android and an App Transport Security
   exception on iOS.
+
+## Hosting on Heroku (current)
+
+Railway's trial ended, so the public site runs on Heroku, paid for by the
+GitHub Student Developer Pack credit ($13 a month). One app serves the
+website and the API. Postgres replaces the SQLite file. The laptop still
+uses SQLite until `DATABASE_URL` is set.
+
+Stay inside the credit:
+
+| Piece | Plan | About |
+| --- | --- | --- |
+| Web dyno | Basic, quantity 1 | $7, always on |
+| Database | Heroku Postgres Essential-0 | $5, 1 GB |
+
+That is about $12. A second dyno, an Eco dyno left running as well, Redis,
+or a larger database is extra and is charged to the card on the account.
+Essential-0 is the plan named in `app.json`. Do not pick Standard.
+
+Create the app from this repo (the `heroku.yml` build needs the container stack):
+
+```
+heroku login
+heroku create <app-name>
+heroku stack:set container -a <app-name>
+heroku addons:create heroku-postgresql:essential-0 -a <app-name>
+heroku ps:type basic -a <app-name>
+heroku config:set TZ=America/La_Paz STUDYFLOW_TRUST_PROXY=1 STUDYFLOW_PUBLIC_URL=https://<app-name>.herokuapp.com -a <app-name>
+```
+
+Leave `STUDYFLOW_API_URL` unset so this app serves `/api` itself. In the
+Heroku dashboard, Deploy → GitHub → this repository → branch `main` →
+Enable Automatic Deploys. The first deploy builds `Dockerfile.web`.
+
+Then open `https://<app-name>.herokuapp.com`. Sign-in, assignments and
+the plan are stored in the Heroku Postgres database. Point the phone
+app's `EXPO_PUBLIC_API_URL` at the same address, with no trailing slash.
 
 ## Hosting the API (so phones work without the laptop)
 

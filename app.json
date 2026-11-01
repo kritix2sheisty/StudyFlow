@@ -1,0 +1,23 @@
+{
+  "name": "StudyFlow",
+  "description": "Plan smarter. Study better.",
+  "stack": "container",
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  },
+  "addons": [
+    "heroku-postgresql:essential-0"
+  ],
+  "env": {
+    "TZ": {
+      "value": "America/La_Paz"
+    },
+    "STUDYFLOW_TRUST_PROXY": {
+      "value": "1"
+    }
+  },
+  "success_url": "/"
+}

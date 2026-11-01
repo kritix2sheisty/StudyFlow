@@ -42,7 +42,8 @@ ENV PATH="/app/.venv/bin:$PATH" \
     REFLEX_REDIS_URL=redis://localhost \
     PYTHONUNBUFFERED=1 \
     PYTHONUTF8=1 \
-    TZ=America/La_Paz
+    TZ=America/La_Paz \
+    STUDYFLOW_TRUST_PROXY=1
 
 WORKDIR /app
 RUN adduser --disabled-password --gecos "" --home /app reflex && chown reflex /app
@@ -54,4 +55,4 @@ USER reflex
 
 EXPOSE $PORT
 
-CMD caddy start && redis-server --daemonize yes && exec reflex run --env prod --backend-only --backend-port 8000
+CMD caddy start && redis-server --daemonize yes --maxmemory 64mb --maxmemory-policy allkeys-lru && exec reflex run --env prod --backend-only --backend-port 8000
