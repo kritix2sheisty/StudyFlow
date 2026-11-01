@@ -120,11 +120,22 @@ def set_db_path(path: Path) -> None:
 
 
 def database_url() -> str:
-    """Postgres connection string, when a host such as Heroku provides one."""
+    """Postgres connection string, when a host such as Heroku provides one.
+
+    Heroku's URL uses the postgres:// scheme and requires SSL. Local
+    databases (localhost) are left alone so a laptop Postgres still works.
+    """
     url = os.environ.get("DATABASE_URL", "").strip()
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
+    if url and "sslmode=" not in url and not _is_local_database(url):
+        url += ("&" if "?" in url else "?") + "sslmode=require"
     return url
+
+
+def _is_local_database(url: str) -> bool:
+    host = url.split("@")[-1].split("/")[0].split(":")[0].lower()
+    return host in {"localhost", "127.0.0.1", "::1"}
 
 
 # Tables whose INSERT should hand back the new integer id (SQLite's lastrowid).

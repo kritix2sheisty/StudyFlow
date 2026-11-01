@@ -16,7 +16,9 @@ from models import Assignment, Priority, TimeSlot, Weekday
 
 def test_database_url_accepts_herokus_postgres_scheme(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgres://user:pw@host:5432/db")
-    assert storage.database_url() == "postgresql://user:pw@host:5432/db"
+    assert storage.database_url() == "postgresql://user:pw@host:5432/db?sslmode=require"
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pw@localhost:5432/db")
+    assert storage.database_url() == "postgresql://user:pw@localhost:5432/db"
     monkeypatch.setenv("DATABASE_URL", "")
     assert storage.database_url() == ""
 
