@@ -40,7 +40,7 @@ def test_no_sample_data_module_remains():
 
 def test_share_site_url_defaults_to_the_hosted_website(monkeypatch):
     monkeypatch.delenv("STUDYFLOW_PUBLIC_URL", raising=False)
-    assert share_site_url() == "https://studyflow-production-d5e4.up.railway.app"
+    assert share_site_url() == "https://studyflow-josiah-f2a2551f4e3b.herokuapp.com"
     monkeypatch.setenv("STUDYFLOW_PUBLIC_URL", "https://studyflow.example/")
     assert share_site_url() == "https://studyflow.example"
 

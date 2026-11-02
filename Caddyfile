@@ -1,12 +1,13 @@
 # Reflex production: Caddy serves the exported frontend on PORT and
-# proxies event/upload/health routes to the backend on :8000.
-# TLS is terminated by the host (Railway).
+# proxies event, upload, health, and the StudyFlow API to the backend
+# on :8000. On one host (Heroku) the phone app calls /api on this same
+# address. TLS is terminated by the host.
 
 :{$PORT}
 
 encode gzip
 
-@backend_routes path /_event/* /ping /_health /_upload /_upload/*
+@backend_routes path /_event/* /ping /_health /_upload /_upload/* /api /api/*
 handle @backend_routes {
 	reverse_proxy localhost:8000
 }

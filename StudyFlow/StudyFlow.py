@@ -74,7 +74,7 @@ STALE_MESSAGE = "Your study plan needs to be regenerated. Your {what} changed si
 
 # What classmates scan. Override with STUDYFLOW_PUBLIC_URL if the domain changes.
 def share_site_url() -> str:
-    return os.environ.get("STUDYFLOW_PUBLIC_URL", "https://studyflow-production-d5e4.up.railway.app").strip().rstrip("/")
+    return os.environ.get("STUDYFLOW_PUBLIC_URL", "https://studyflow-josiah-f2a2551f4e3b.herokuapp.com").strip().rstrip("/")
 
 # Shared card styling: a soft shadow (studyflow.css) that deepens on hover. No motion.
 CARD_STYLE = {
