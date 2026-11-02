@@ -24,12 +24,16 @@ guaranteed to be the best possible schedule (see "Limitations").
      group's turn comes, against the minutes actually still free in
      the blocks that assignment may use (v1.1, "achievable first";
      see below). The Phase 2 rank still orders each half.
-  4. For each assignment in that order, walk the blocks in time order
-     and pour work into every block dated on or before its due date,
-     splitting across blocks as needed, until the assignment is fully
-     placed or no eligible time is left. Work already overdue has no
-     date limit: its deadline is gone, so it simply goes as early as
-     possible.
+  4. For each assignment, share its remaining minutes across the days
+     from today through its due date that still have free time. Each
+     of those days is offered about ceil(remaining / days left), and
+     never more than `max_day_minutes` of work in the whole day
+     (breaks do not count; the default is 4 hours). A share shorter
+     than the minimum session is not placed on its own.
+  4b. Minutes still left are poured into the earliest eligible block
+     with no daily cap, so a deadline that can only be met by a longer
+     day still is. Overdue work skips the share and uses this pass
+     only: its deadline is gone, so it goes as early as possible.
   5. Between two chunks of work in the same block, insert a break of
      `break_minutes`. A break is never shortened, and the chunk after
      it is at least as long as the break; if both would not fit, the
@@ -119,22 +123,34 @@ Rules settled in the Phase 3 review:
     and never takes time from another assignment.
   - Within one due date, work that can still be finished is placed
     before work that cannot (v1.1). Between due dates, EDF holds.
+  - Daily study time is a preference, not a hard stop. A day stays
+    near four hours when the work can be shared across the days
+    before it is due. Three hours due Tuesday, with two hours free
+    on Monday and on Tuesday, become ninety minutes each day. If the
+    only way to meet the deadline is a longer day, the deadline
+    wins. Overdue work is not spread and is not held to the
+    preference: it is placed as early as possible.
+  - A share that would be shorter than the minimum session is not
+    split out. That work stays one normal session, placed as early
+    as it fits.
 
-Limitations (deliberate, for a first version):
-  - Greedy fills the earliest eligible block completely before moving
-    on, so work is front-loaded rather than spread evenly over the
-    days before a deadline. Three hours due Tuesday become two hours
-    Monday and one Tuesday, not ninety minutes each day.
+Limitations (deliberate):
+  - Greedy still does not backtrack. Sharing a task across days can
+    leave a short gap at the end of a block, and the next task may
+    be unable to use it once a break and a minimum session are
+    required. A packed week can therefore fit a little less work
+    than filling each block before moving on.
   - The EDF guarantee ignores breaks, so a set of assignments that
     fits exactly can still lose a few minutes to a break and end up
     with a small remainder flagged. A tail shorter than two breaks
     in a block that already holds work is left idle rather than
     turned into a tiny session; those minutes are not recovered.
-  - There is no cap on hours per day and no preference for variety,
-    so a long block can be one subject end to end.
+  - There is no preference for mixing subjects beyond sharing each
+    assignment across its own days, so a long block can still be one
+    subject when that is what the deadline needs.
   - "Optimal" is not defined yet. Once StudyFlow decides what a
-    better schedule means (fewer late hours? more even days? fewer
-    context switches?), a search or optimisation pass can replace the
+    better schedule means (fewer late hours? fewer context
+    switches?), a search or optimisation pass can replace the
     greedy fill. Until then, greedy is the honest choice.
 """
 
@@ -157,6 +173,10 @@ DEFAULT_MAX_CONSECUTIVE_MINUTES: Optional[int] = 120
 # None means no minimum. v1.1 sets 30 minutes: 15 is too short to
 # settle into, 45-60 is a normal session, 120 is the cap.
 DEFAULT_MIN_SESSION_MINUTES: Optional[int] = 30
+# Preferred cap on non-break study minutes in one day. Four hours is
+# a preference: a deadline that cannot be met inside it still gets a
+# longer day. None means no daily cap. Overdue work ignores it.
+DEFAULT_MAX_DAY_MINUTES: Optional[int] = 240
 BREAK_LABEL = "Break"
 
 
@@ -193,6 +213,7 @@ class _WorkBlock:
         self.end = end_hour * 60
         self.cursor = self.start       # moves forward as the block fills
         self.run = 0                   # minutes of work since the last break
+        self.last_label: Optional[str] = None
 
     @property
     def remaining(self) -> int:
@@ -293,6 +314,15 @@ def _achievable_first(group: List[Assignment], blocks: List[_WorkBlock], today: 
     return sorted(group, key=cannot_finish)
 
 
+def _day_work_minutes(result: ScheduleResult, day: date) -> int:
+    """Non-break minutes already on `day`. Breaks do not count toward the daily preference."""
+    return sum(
+        block.end_minute - block.start_minute
+        for block in result.by_date.get(day, [])
+        if block.label != BREAK_LABEL
+    )
+
+
 def _place(
     assignment: Assignment,
     blocks: List[_WorkBlock],
@@ -301,9 +331,17 @@ def _place(
     result: ScheduleResult,
     max_consecutive_minutes: Optional[int] = DEFAULT_MAX_CONSECUTIVE_MINUTES,
     min_session_minutes: Optional[int] = DEFAULT_MIN_SESSION_MINUTES,
+    max_day_minutes: Optional[int] = DEFAULT_MAX_DAY_MINUTES,
 ) -> None:
     """
-    Pour one assignment into the eligible blocks, earliest first.
+    Place one assignment: share it across the days before it is due,
+    then pour anything left into the earliest eligible block.
+
+    The share keeps a day near `max_day_minutes` (unlimited when None).
+    The second pass ignores that preference, so a deadline that needs
+    a longer day still gets one. Overdue work, a single eligible day,
+    and a share that would be shorter than the minimum session skip
+    the share and use the earliest pass only.
 
     Inside a block the assignment is placed in runs of at most
     `max_consecutive_minutes` (unlimited when None); between two runs
@@ -324,19 +362,97 @@ def _place(
         return
     # An assignment that is already overdue has no deadline left to
     # respect: the best that can happen is finishing it as soon as
-    # possible, so every block is fair game for it.
+    # possible, so every block is fair game for it and it is not spread.
     overdue = assignment.due_date < today
+    eligible = {
+        block.date for block in blocks
+        if overdue or _can_schedule_on(assignment, block.date)
+    }
 
+    def day_has_room(day: date) -> bool:
+        return any(block.date == day and block.remaining > 0 for block in blocks)
+
+    open_days = [day for day in sorted(eligible) if day_has_room(day)]
+    spread = not overdue and len(open_days) > 1
+    if spread and min_session_minutes:
+        natural = (remaining + len(open_days) - 1) // len(open_days)
+        if natural < min_session_minutes:
+            # An even split would be a tiny session. Keep one normal
+            # session and let the earliest pass place it.
+            spread = False
+
+    if spread:
+        dates = sorted(eligible)
+        for index, day in enumerate(dates):
+            if remaining <= 0:
+                break
+            forward = [d for d in dates[index:] if day_has_room(d)]
+            if not forward or forward[0] != day:
+                continue
+            share = (remaining + len(forward) - 1) // len(forward)
+            if max_day_minutes is None:
+                budget = min(share, remaining)
+            else:
+                budget = min(share, max(0, max_day_minutes - _day_work_minutes(result, day)), remaining)
+            if budget <= 0:
+                continue
+            if min_session_minutes and budget < min_session_minutes and budget < remaining:
+                continue
+            remaining = _pour(
+                assignment, blocks, remaining, result, break_minutes, cap,
+                min_session_minutes, eligible, only_date=day, limit=budget,
+            )
+
+    if remaining > 0:
+        remaining = _pour(
+            assignment, blocks, remaining, result, break_minutes, cap,
+            min_session_minutes, eligible, only_date=None, limit=None,
+        )
+
+    if remaining > 0:
+        result.unscheduled.append((assignment, remaining / 60))
+
+
+def _pour(
+    assignment: Assignment,
+    blocks: List[_WorkBlock],
+    remaining: int,
+    result: ScheduleResult,
+    break_minutes: int,
+    cap: Optional[int],
+    min_session_minutes: Optional[int],
+    eligible: set,
+    only_date: Optional[date],
+    limit: Optional[int],
+) -> int:
+    """
+    Pour up to `limit` minutes (unlimited when None) into the eligible
+    blocks, earliest first. `only_date` restricts the pour to one day,
+    which is how a day's share is placed. Returns the minutes still
+    unplaced.
+
+    A later pour of the same assignment continues a run that stopped
+    short of the consecutive cap, instead of paying a break in the
+    middle of a session. A different assignment still gets the break.
+    """
+    placed = 0
     for block in blocks:
-        if remaining <= 0:
+        if remaining <= 0 or (limit is not None and placed >= limit):
             break
-        if not overdue and not _can_schedule_on(assignment, block.date):
-            continue   # this study period is after the due date: skip it
-        while remaining > 0:
+        if block.date not in eligible:
+            continue
+        if only_date is not None and block.date != only_date:
+            continue
+        while remaining > 0 and (limit is None or placed < limit):
             free = block.remaining
             if free <= 0:
                 break
 
+            continuing = (
+                block.run > 0
+                and block.last_label == assignment.name
+                and (cap is None or block.run < cap)
+            )
             # A break separates this chunk from the previous one,
             # whether that was another assignment or this one at the
             # end of a full run; it resets the run, so the cap applies
@@ -344,38 +460,56 @@ def _place(
             # least as long as the break: a full break is never paid
             # for a shorter session (v1.1). With no break configured,
             # one minute of room is enough and no Break entry is
-            # written.
-            room = free - break_minutes if block.has_work else free
-            if block.has_work and room < max(break_minutes, 1):
-                break
+            # written. Continuing the same run pays no break.
+            need_break = block.has_work and not continuing and break_minutes > 0
+            if need_break:
+                room = free - break_minutes
+                if room < max(break_minutes, 1):
+                    break
+            else:
+                room = free
             chunk = min(remaining, room)
+            if limit is not None:
+                chunk = min(chunk, limit - placed)
             if cap is not None:
-                chunk = min(chunk, cap)
+                run_left = (cap - block.run) if continuing else cap
+                chunk = min(chunk, max(run_left, 0))
+            if chunk <= 0:
+                break
 
-            if min_session_minutes:
+            if min_session_minutes and not continuing:
                 # Policy B: at least the minimum, unless this piece
                 # finishes the assignment; after a break, also at
                 # least a break long.
                 floor = min(min_session_minutes, remaining)
-                if block.has_work:
+                if need_break:
                     floor = max(floor, break_minutes)
                 if chunk < floor:
                     break
 
-            if block.has_work and break_minutes > 0:
+            if need_break:
                 _append(result, block, break_minutes, BREAK_LABEL)
             _append(result, block, chunk, assignment.name)
             remaining -= chunk
-
-    if remaining > 0:
-        result.unscheduled.append((assignment, remaining / 60))
+            placed += chunk
+    return remaining
 
 
 def _append(result: ScheduleResult, block: _WorkBlock, minutes: int, label: str) -> None:
     start = block.cursor
     end = start + minutes
-    result.by_date.setdefault(block.date, []).append(ScheduledBlock(start, end, label))
+    day = result.by_date.setdefault(block.date, [])
+    last = day[-1] if day else None
+    # The share pass and the deadline pass can extend one session.
+    # Keep it one block. A chunk that only touches the next slot is
+    # left separate: that slot is the student's own pause.
+    if (last is not None and last.label == label and label != BREAK_LABEL
+            and last.end_minute == start and last.start_minute >= block.start):
+        last.end_minute = end
+    else:
+        day.append(ScheduledBlock(start, end, label))
     block.cursor = end
+    block.last_label = label
     block.run = 0 if label == BREAK_LABEL else block.run + minutes
 
 
@@ -387,6 +521,7 @@ def build_schedule(
     days_ahead: int = DEFAULT_DAYS_AHEAD,
     max_consecutive_minutes: Optional[int] = DEFAULT_MAX_CONSECUTIVE_MINUTES,
     min_session_minutes: Optional[int] = DEFAULT_MIN_SESSION_MINUTES,
+    max_day_minutes: Optional[int] = DEFAULT_MAX_DAY_MINUTES,
 ) -> ScheduleResult:
     """
     Build a deadline-aware schedule for the next `days_ahead` days.
@@ -396,11 +531,15 @@ def build_schedule(
     `min_session_minutes` is the shortest session other than an
     assignment's final piece (30 by default); None means no minimum.
     It must be at least 1 and no more than the cap when one is set.
+    `max_day_minutes` is the preferred study time in one day, breaks
+    not counted (240 by default). None means no daily preference. A
+    deadline that cannot be met inside it still gets a longer day.
 
     See the module docstring for the algorithm. Assignments are
     placed earliest deadline first; within one deadline, those that
-    can still be finished go before those that cannot. Assignments
-    that do not fit on or before their due date end up in
+    can still be finished go before those that cannot. Each
+    assignment's hours are shared across the days before it is due.
+    Assignments that do not fit on or before their due date end up in
     result.unscheduled, along with how many hours were left over.
     """
     today = today or date.today()
@@ -420,6 +559,8 @@ def build_schedule(
                 f"min_session_minutes ({min_session_minutes}) cannot exceed "
                 f"max_consecutive_minutes ({max_consecutive_minutes})"
             )
+    if max_day_minutes is not None and max_day_minutes < 1:
+        raise ValueError(f"max_day_minutes ({max_day_minutes}) must be at least 1")
     blocks = _generate_week_blocks(time_slots, today, days_ahead)
     result = ScheduleResult()
 
@@ -427,7 +568,7 @@ def build_schedule(
     for _, group in groupby(ordered, key=lambda a: _effective_due(a, today)):
         for assignment in _achievable_first(list(group), blocks, today):
             _place(assignment, blocks, today, break_minutes, result,
-                   max_consecutive_minutes, min_session_minutes)
+                   max_consecutive_minutes, min_session_minutes, max_day_minutes)
 
     _sort_days(result)
     return result
