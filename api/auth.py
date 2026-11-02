@@ -8,6 +8,14 @@ and nothing else.
     POST /api/auth/login     {email, password}   -> 200 {token, expires_at}
     POST /api/auth/logout    bearer              -> 204
     GET  /api/me             bearer              -> 200 {id, email, created_at}
+    POST /api/auth/forgot    {email}             -> 200 {ok: true}
+    POST /api/auth/reset     {token, password}   -> 200 {ok: true}
+
+Forgot always answers the same way whether or not the email is
+registered, so the API does not reveal which emails have accounts.
+The reset link is emailed only when SMTP is configured. A reset token
+works once, expires in an hour, and logging in with the new password
+ends every older session.
 
 Login failure says the same thing for a wrong password and an unknown
 email, so the API never reveals which emails are registered. Login and
@@ -19,13 +27,14 @@ import logging
 import os
 import secrets
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
+from urllib.parse import quote
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 import storage
-from api import security
+from api import mail, security
 
 log = logging.getLogger("studyflow.api")
 
@@ -56,6 +65,10 @@ def _web_key() -> str:
 
 login_limiter = security.RateLimiter(limit=10, window_seconds=15 * 60)
 register_limiter = security.RateLimiter(limit=10, window_seconds=15 * 60)
+reset_limiter = security.RateLimiter(limit=5, window_seconds=15 * 60)
+
+RESET_MINUTES = 60
+RESET_INVALID = "This reset link is invalid or has expired."
 
 
 class ApiError(Exception):
@@ -184,3 +197,55 @@ async def logout(request: Request) -> Response:
 async def me(request: Request) -> Response:
     user = current_user(request)
     return JSONResponse({"id": user.id, "email": user.email, "created_at": user.created_at})
+
+
+async def forgot_password(request: Request) -> Response:
+    """
+    Email a one-time reset link. The answer is the same when the email
+    is unknown, so a caller cannot learn who has an account. When SMTP
+    is not configured, every caller gets the same 503.
+    """
+    if not mail.configured():
+        raise ApiError(503, "Password reset email is not set up yet.")
+    if not reset_limiter.allow(_client_key(request)):
+        log.warning("reset rate limit hit")
+        raise ApiError(429, "Too many attempts. Try again later.")
+    body = await _json_body(request)
+    email = str(body.get("email", "")).strip().lower()
+    if not EMAIL.match(email):
+        raise ApiError(400, "Enter a valid email address.")
+    if not reset_limiter.allow(f"email:{email}"):
+        log.warning("reset rate limit hit")
+        raise ApiError(429, "Too many attempts. Try again later.")
+    found = storage.get_user_by_email(email)
+    if found is not None and found.password_hash:
+        token = security.new_token()
+        expires_at = (datetime.now() + timedelta(minutes=RESET_MINUTES)).isoformat(timespec="seconds")
+        storage.create_password_reset(found.id, security.token_hash(token), expires_at)
+        link = f"{mail.public_url()}/reset?token={quote(token)}"
+        try:
+            mail.send_reset_email(found.email, link)
+        except Exception:
+            log.exception("reset email failed user=%s", found.id)
+            raise ApiError(503, "Could not send the reset email. Try again later.")
+        log.info("reset email sent user=%s", found.id)
+    return JSONResponse({"ok": True})
+
+
+async def reset_password(request: Request) -> Response:
+    """Set a new password from a reset link and log out every old session."""
+    if not reset_limiter.allow(_client_key(request)):
+        log.warning("reset rate limit hit")
+        raise ApiError(429, "Too many attempts. Try again later.")
+    body = await _json_body(request)
+    token = str(body.get("token", "")).strip()
+    password = body.get("password", "")
+    if not isinstance(password, str) or len(password) < security.MIN_PASSWORD_LENGTH:
+        raise ApiError(400, f"Use a password of at least {security.MIN_PASSWORD_LENGTH} characters.")
+    user_id = storage.consume_password_reset(security.token_hash(token)) if token else None
+    if user_id is None:
+        raise ApiError(400, RESET_INVALID)
+    storage.set_password(user_id, security.hash_password(password))
+    storage.revoke_user_sessions(user_id)
+    log.info("password reset user=%s", user_id)
+    return JSONResponse({"ok": True})

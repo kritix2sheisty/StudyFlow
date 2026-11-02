@@ -38,6 +38,7 @@ def temp_db(tmp_path):
     storage.init_db()
     api_auth.login_limiter.reset()
     api_auth.register_limiter.reset()
+    api_auth.reset_limiter.reset()
 
     async def sign_up():
         client = ApiClient()
@@ -845,3 +846,73 @@ def test_login_from_a_form_payload_signs_in():
     assert state.authenticated is True
     assert state.saved_token
     assert state.user_email == "student@example.com"
+
+
+def test_signing_in_clears_a_password_updated_notice():
+    state = DashboardState(_reflex_internal_init=True)
+    state.auth_notice = "Password updated. Sign in with the new one."
+    run(state.login({"email": "", "password": ""}))
+    assert state.auth_notice == ""
+    assert state.auth_error == "Enter your email and password."
+
+
+def test_opening_sign_in_keeps_the_password_updated_notice():
+    state = DashboardState(_reflex_internal_init=True)
+    state.auth_notice = "Password updated. Sign in with the new one."
+    run(state.redirect_if_logged_in())
+    assert state.auth_notice == "Password updated. Sign in with the new one."
+
+
+def test_request_reset_without_smtp_says_email_is_not_set_up(monkeypatch):
+    for name in ("STUDYFLOW_SMTP_HOST", "STUDYFLOW_SMTP_FROM", "STUDYFLOW_PUBLIC_URL"):
+        monkeypatch.delenv(name, raising=False)
+    state = DashboardState(_reflex_internal_init=True)
+    run(state.request_reset({"email": "student@example.com"}))
+    assert state.auth_error == "Password reset email is not set up yet."
+    assert state.auth_notice == ""
+
+
+def test_request_reset_says_a_link_is_on_the_way_without_confirming_the_account(monkeypatch):
+    monkeypatch.setenv("STUDYFLOW_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("STUDYFLOW_SMTP_FROM", "noreply@example.com")
+    monkeypatch.setenv("STUDYFLOW_PUBLIC_URL", "https://studyflow.example")
+    sent = {}
+    monkeypatch.setattr("api.mail.send_reset_email", lambda to, link: sent.update(to=to, link=link))
+    state = DashboardState(_reflex_internal_init=True)
+    run(state.request_reset({"email": "student@example.com"}))
+    assert state.auth_notice == (
+        "If that email has an account, a reset link is on its way. It expires in one hour."
+    )
+    assert state.auth_error == ""
+    assert sent["to"] == "student@example.com"
+    assert "/reset?token=" in sent["link"]
+    run(state.request_reset({"email": "nobody@example.com"}))
+    assert state.auth_notice.startswith("If that email has an account")
+    assert "to" in sent and sent["to"] == "student@example.com"
+
+
+def test_submit_reset_updates_the_password(monkeypatch):
+    from urllib.parse import parse_qs, urlparse
+    monkeypatch.setenv("STUDYFLOW_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("STUDYFLOW_SMTP_FROM", "noreply@example.com")
+    monkeypatch.setenv("STUDYFLOW_PUBLIC_URL", "https://studyflow.example")
+    sent = {}
+    monkeypatch.setattr("api.mail.send_reset_email", lambda to, link: sent.update(link=link))
+    state = DashboardState(_reflex_internal_init=True)
+    run(state.request_reset({"email": "student@example.com"}))
+    state.reset_token = parse_qs(urlparse(sent["link"]).query)["token"][0]
+    run(state.submit_reset({"password": "abcdefgh", "confirm": "mismatch!"}))
+    assert state.auth_error == "The two passwords do not match."
+    run(state.submit_reset({"password": "a brand new password", "confirm": "a brand new password"}))
+    assert state.auth_notice == "Password updated. Sign in with the new one."
+    assert state.reset_token == ""
+    signed_in = DashboardState(_reflex_internal_init=True)
+    run(signed_in.login({"email": "student@example.com", "password": "a brand new password"}))
+    assert signed_in.authenticated is True
+    assert signed_in.auth_notice == ""
+
+
+def test_load_reset_tolerates_a_missing_router():
+    state = DashboardState(_reflex_internal_init=True)
+    run(state.load_reset())
+    assert state.reset_token == ""

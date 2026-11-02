@@ -21,7 +21,7 @@ Open it in any browser on a computer or phone. There is nothing to install. Scan
 
 ### Getting started
 
-1. **Create an account** with your email and a password (8 characters or more). The browser keeps you signed in until you log out, and the same account works on the phone app.
+1. **Create an account** with your email and a password (8 characters or more). The browser keeps you signed in until you log out, and the same account works on the phone app. **Forgot your password?** on the sign-in page emails a link that expires in one hour.
 2. **Add your assignments**: name, subject, due date, estimated hours and priority.
 3. **Add when you can study**: recurring weekly blocks such as Monday 4–6 PM. StudyFlow never invents free time.
 4. **Generate your study plan.** StudyFlow places the work into your study time, before each due date, and tells you if anything will not fit.
@@ -283,6 +283,20 @@ heroku config:set TZ=America/La_Paz STUDYFLOW_TRUST_PROXY=1 STUDYFLOW_PUBLIC_URL
 Leave `STUDYFLOW_API_URL` unset so this app serves `/api` itself. In the
 Heroku dashboard, Deploy → GitHub → this repository → branch `main` →
 Enable Automatic Deploys. The first deploy builds `Dockerfile.web`.
+
+Password reset stays quiet until the app has an SMTP login. `STUDYFLOW_PUBLIC_URL`
+is already the live site, so the link in the email opens the right page.
+A Gmail account can send these without a custom domain: turn on 2-step
+verification, create an app password, and use that Gmail address as both
+the user and the From address.
+
+```
+heroku config:set STUDYFLOW_SMTP_HOST=smtp.gmail.com STUDYFLOW_SMTP_PORT=587 STUDYFLOW_SMTP_USER=you@gmail.com STUDYFLOW_SMTP_PASSWORD=your-app-password STUDYFLOW_SMTP_FROM=you@gmail.com -a <app-name>
+```
+
+Until those are set, the reset page says email is not set up yet. The
+message never includes the reset link in the logs. Another free option,
+after you verify a sender, is Brevo (`smtp-relay.brevo.com`, port 587).
 
 Then open `https://<app-name>.herokuapp.com`. Sign-in, assignments and
 the plan are stored in the Heroku Postgres database. Point the phone

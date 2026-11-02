@@ -9,13 +9,14 @@ anything.
 from pathlib import Path
 
 from StudyFlow.StudyFlow import (
-    DashboardState, app, assignments_page, focus_page, index, login_page, progress_page, register_page,
-    schedule_page, share_site_url,
+    DashboardState, app, assignments_page, focus_page, forgot_page, index, login_page, progress_page,
+    register_page, reset_page, schedule_page, share_site_url,
 )
 
 
 def test_every_page_builds():
-    for page in (index, assignments_page, schedule_page, progress_page, focus_page, login_page, register_page):
+    for page in (index, assignments_page, schedule_page, progress_page, focus_page, login_page, register_page,
+                 forgot_page, reset_page):
         assert page() is not None
     assert app is not None
 
@@ -28,6 +29,7 @@ def test_state_exposes_the_vars_the_pages_bind_to():
         "has_plan", "plan_stale", "plan_message", "plan_days", "today_plan", "plan_statuses",
         "plan_required", "plan_scheduled", "plan_unscheduled", "plan_completion", "progress_value",
         "authenticated", "user_email", "auth_email", "auth_password", "auth_confirm", "auth_error",
+        "auth_notice", "reset_token",
         "saved_token", "import_available", "import_summary", "share_open",
     ):
         assert hasattr(DashboardState, name), name

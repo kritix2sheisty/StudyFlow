@@ -115,6 +115,8 @@ class DashboardState(rx.State):
     auth_password: str = ""
     auth_confirm: str = ""
     auth_error: str = ""
+    auth_notice: str = ""
+    reset_token: str = ""
     share_open: bool = False
 
     def set_share_open(self, value: bool):
@@ -181,6 +183,7 @@ class DashboardState(rx.State):
 
     async def login(self, form_data: dict | None = None):
         """Sign in with the API; on success the dashboard loads as this student."""
+        self.auth_notice = ""
         if form_data:
             self.auth_email = str(form_data.get("email", ""))
             self.auth_password = str(form_data.get("password", ""))
@@ -232,6 +235,70 @@ class DashboardState(rx.State):
         await self.restore_session()
         if self.authenticated:
             return rx.redirect("/")
+
+    async def open_forgot(self):
+        """The forgot-password page. A notice from a finished reset stays on the sign-in page."""
+        self.auth_error = ""
+        self.auth_notice = ""
+        self.auth_password = ""
+        self.auth_confirm = ""
+        return await self.redirect_if_logged_in()
+
+    async def request_reset(self, form_data: dict | None = None):
+        """Ask the API to email a reset link. The answer does not say whether the account exists."""
+        if form_data:
+            self.auth_email = str(form_data.get("email", ""))
+        email = self.auth_email.strip()
+        self.auth_error = ""
+        self.auth_notice = ""
+        if not email:
+            self.auth_error = "Enter your email address."
+            return
+        try:
+            await ApiClient(browser_ip=self._browser_ip()).forgot_password(email)
+        except ApiError as e:
+            self.auth_error = e.message
+            return
+        self.auth_notice = "If that email has an account, a reset link is on its way. It expires in one hour."
+
+    async def load_reset(self):
+        """Read the one-time token from the link in the email. A signed-in student can still use it."""
+        self.auth_error = ""
+        self.auth_password = ""
+        self.auth_confirm = ""
+        token = ""
+        try:
+            token = str(self.router.page.params.get("token", "") or "")
+        except Exception:
+            token = ""
+        self.reset_token = token
+
+    async def submit_reset(self, form_data: dict | None = None):
+        """Save the new password, then send the student to sign in."""
+        if form_data:
+            self.auth_password = str(form_data.get("password", ""))
+            self.auth_confirm = str(form_data.get("confirm", ""))
+            token = str(form_data.get("token", "") or "").strip()
+            if token:
+                self.reset_token = token
+        password = self.auth_password
+        self.auth_error = ""
+        self.auth_notice = ""
+        if not password:
+            self.auth_error = "Choose a new password."
+            return
+        if password != self.auth_confirm:
+            self.auth_error = "The two passwords do not match."
+            return
+        try:
+            await ApiClient(browser_ip=self._browser_ip()).reset_password(self.reset_token, password)
+        except ApiError as e:
+            self.auth_error = e.message
+            return
+        self._clear_auth_form()
+        self.reset_token = ""
+        self.auth_notice = "Password updated. Sign in with the new one."
+        return rx.redirect("/login")
 
     async def _signed_out(self):
         """A rejected token means the session ended elsewhere: start over."""
@@ -2272,6 +2339,11 @@ def auth_error() -> rx.Component:
     return rx.cond(s.auth_error != "", rx.text(s.auth_error, size="1", color=rx.color("red", 11)), rx.box())
 
 
+def auth_notice() -> rx.Component:
+    s = DashboardState
+    return rx.cond(s.auth_notice != "", rx.text(s.auth_notice, size="2"), rx.box())
+
+
 def login_page() -> rx.Component:
     s = DashboardState
     return auth_shell(
@@ -2282,8 +2354,10 @@ def login_page() -> rx.Component:
                                              placeholder="you@school.edu", width="100%"), ""),
                 form_field("Password", rx.input(name="password", value=s.auth_password, on_change=s.set_auth_password,
                                                 type="password", width="100%"), ""),
+                auth_notice(),
                 auth_error(),
                 rx.button("Sign in", type="submit", size="3", width="100%"),
+                rx.link("Forgot your password?", href="/forgot", size="2"),
                 rx.text("New to StudyFlow? ", rx.link("Create an account", href="/register"), size="2", color_scheme="gray"),
                 spacing="3", align="start", width="100%",
             ),
@@ -2313,10 +2387,64 @@ def register_page() -> rx.Component:
         ),
     )
 
+
+def forgot_page() -> rx.Component:
+    s = DashboardState
+    return auth_shell(
+        "Reset your password",
+        "We'll email a link if this address has an account. The link expires in one hour.",
+        rx.form(
+            rx.vstack(
+                form_field("Email", rx.input(name="email", value=s.auth_email, on_change=s.set_auth_email, type="email",
+                                             placeholder="you@school.edu", width="100%"), ""),
+                auth_notice(),
+                auth_error(),
+                rx.button("Email me a reset link", type="submit", size="3", width="100%"),
+                rx.link("Back to sign in", href="/login", size="2"),
+                spacing="3", align="start", width="100%",
+            ),
+            on_submit=s.request_reset, width="100%",
+        ),
+    )
+
+
+def reset_page() -> rx.Component:
+    s = DashboardState
+    form = rx.form(
+        rx.vstack(
+            form_field("New password", rx.input(name="password", value=s.auth_password, on_change=s.set_auth_password,
+                                                type="password", width="100%"), ""),
+            form_field("New password again", rx.input(name="confirm", value=s.auth_confirm, on_change=s.set_auth_confirm,
+                                                      type="password", width="100%"), ""),
+            auth_error(),
+            rx.button("Update password", type="submit", size="3", width="100%"),
+            rx.link("Back to sign in", href="/login", size="2"),
+            spacing="3", align="start", width="100%",
+        ),
+        on_submit=s.submit_reset, width="100%",
+    )
+    return auth_shell(
+        "Choose a new password",
+        "At least 8 characters. Saving it signs you out of every other browser.",
+        rx.cond(
+            s.reset_token == "",
+            rx.vstack(
+                rx.text("Open the reset link from your email. It expires in one hour and works once.", size="2"),
+                rx.link("Request a new link", href="/forgot", size="2"),
+                spacing="3", align="start", width="100%",
+            ),
+            form,
+        ),
+    )
+
 app.add_page(index, title="StudyFlow", on_load=DashboardState.load_data)
 app.add_page(login_page, route="/login", title="Sign in · StudyFlow", on_load=DashboardState.redirect_if_logged_in)
 app.add_page(register_page, route="/register", title="Create account · StudyFlow",
              on_load=DashboardState.redirect_if_logged_in)
+app.add_page(forgot_page, route="/forgot", title="Reset password · StudyFlow",
+             on_load=DashboardState.open_forgot)
+app.add_page(reset_page, route="/reset", title="New password · StudyFlow",
+             on_load=DashboardState.load_reset)
 app.add_page(assignments_page, route="/assignments", title="Assignments · StudyFlow",
              on_load=DashboardState.load_data)
 app.add_page(schedule_page, route="/schedule", title="Schedule · StudyFlow",

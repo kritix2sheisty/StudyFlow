@@ -36,6 +36,8 @@ def create_api() -> Starlette:
         Route("/api/auth/register", auth.register, methods=["POST"]),
         Route("/api/auth/login", auth.login, methods=["POST"]),
         Route("/api/auth/logout", auth.logout, methods=["POST"]),
+        Route("/api/auth/forgot", auth.forgot_password, methods=["POST"]),
+        Route("/api/auth/reset", auth.reset_password, methods=["POST"]),
         Route("/api/me", auth.me, methods=["GET"]),
         Route("/api/account/local-data", account.local_data, methods=["GET"]),
         Route("/api/account/import-local", account.import_local, methods=["POST"]),
