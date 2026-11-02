@@ -100,6 +100,12 @@ class ApiClient:
     async def logout(self) -> None:
         await self._request("POST", "/api/auth/logout")
 
+    async def forgot_password(self, email: str) -> dict:
+        return await self._request("POST", "/api/auth/forgot", json={"email": email})
+
+    async def reset_password(self, token: str, password: str) -> dict:
+        return await self._request("POST", "/api/auth/reset", json={"token": token, "password": password})
+
     async def me(self) -> dict:
         return await self._request("GET", "/api/me")
 

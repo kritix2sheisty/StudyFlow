@@ -82,6 +82,14 @@ class Session:
 
 
 @dataclass
+class PasswordReset:
+    """A one-time reset link. The database holds the token's hash, never the token."""
+    user_id: str
+    expires_at: str
+    used_at: Optional[str]
+
+
+@dataclass
 class SessionCompletion:
     """A study block the student finished. It changes nothing else: not
     the assignment, not the plan. Progress counts these as hours done."""
@@ -284,6 +292,16 @@ def init_db() -> None:
     """)
 
     cur.execute("""
+        CREATE TABLE IF NOT EXISTS password_resets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL REFERENCES users(id),
+            token_hash TEXT NOT NULL UNIQUE,
+            expires_at TEXT NOT NULL,
+            used_at TEXT
+        )
+    """)
+
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS classes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -434,6 +452,68 @@ def revoke_session(token_hash: str) -> bool:
     updated = cur.rowcount > 0
     conn.close()
     return updated
+
+
+def revoke_user_sessions(user_id: str) -> None:
+    """Log out every session for one student. Used when their password changes."""
+    conn = get_connection()
+    conn.execute(
+        "UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+        (datetime.now().isoformat(timespec="seconds"), user_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def create_password_reset(user_id: str, token_hash: str, expires_at: str) -> None:
+    """Store a reset token's hash. Any earlier unused link for this student stops working."""
+    now = datetime.now().isoformat(timespec="seconds")
+    conn = get_connection()
+    conn.execute(
+        "UPDATE password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL",
+        (now, user_id),
+    )
+    conn.execute(
+        "INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (?, ?, ?)",
+        (user_id, token_hash, expires_at),
+    )
+    conn.commit()
+    conn.close()
+
+
+def find_password_reset(token_hash: str) -> Optional[PasswordReset]:
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT user_id, expires_at, used_at FROM password_resets WHERE token_hash = ?",
+        (token_hash,),
+    ).fetchone()
+    conn.close()
+    return PasswordReset(user_id=row[0], expires_at=row[1], used_at=row[2]) if row else None
+
+
+def consume_password_reset(token_hash: str) -> Optional[str]:
+    """
+    Mark a still-valid reset token used and return the student's id.
+    An unknown, used, or expired token returns None, and only one
+    caller can consume a given token.
+    """
+    now = datetime.now().isoformat(timespec="seconds")
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT user_id, expires_at, used_at FROM password_resets WHERE token_hash = ?",
+        (token_hash,),
+    ).fetchone()
+    if row is None or row[2] is not None or row[1] <= now:
+        conn.close()
+        return None
+    cur = conn.execute(
+        "UPDATE password_resets SET used_at = ? WHERE token_hash = ? AND used_at IS NULL",
+        (now, token_hash),
+    )
+    conn.commit()
+    consumed = cur.rowcount > 0
+    conn.close()
+    return row[0] if consumed else None
 
 
 # ---------- Plans (one per student) ----------

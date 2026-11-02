@@ -25,6 +25,7 @@ def temp_db(tmp_path):
     storage.init_db()
     auth.login_limiter.reset()
     auth.register_limiter.reset()
+    auth.reset_limiter.reset()
     yield
 
 
@@ -226,6 +227,161 @@ def test_the_built_in_student_has_no_password_and_cannot_log_in(client):
 
 
 # ---------- Mounted on the Reflex backend ----------
+
+# ---------- Password reset ----------
+
+PUBLIC = "https://studyflow.example"
+
+
+def smtp_ready(monkeypatch):
+    monkeypatch.setenv("STUDYFLOW_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("STUDYFLOW_SMTP_FROM", "StudyFlow <noreply@example.com>")
+    monkeypatch.setenv("STUDYFLOW_PUBLIC_URL", PUBLIC)
+    monkeypatch.setenv("STUDYFLOW_SMTP_USER", "mailbox")
+    monkeypatch.setenv("STUDYFLOW_SMTP_PASSWORD", "secret")
+
+
+def forgot(client, email=EMAIL):
+    return client.post("/api/auth/forgot", json={"email": email})
+
+
+def reset(client, token, password="a brand new password"):
+    return client.post("/api/auth/reset", json={"token": token, "password": password})
+
+
+def test_forgot_is_unavailable_until_email_is_configured(client, monkeypatch):
+    monkeypatch.delenv("STUDYFLOW_SMTP_HOST", raising=False)
+    monkeypatch.delenv("STUDYFLOW_SMTP_FROM", raising=False)
+    monkeypatch.delenv("STUDYFLOW_PUBLIC_URL", raising=False)
+    register(client)
+    for email in (EMAIL, "nobody@example.com"):
+        r = forgot(client, email)
+        assert r.status_code == 503
+        assert r.json()["error"] == "Password reset email is not set up yet."
+    assert storage.find_password_reset("anything") is None
+
+
+def test_forgot_for_an_unknown_email_sends_nothing(client, monkeypatch):
+    smtp_ready(monkeypatch)
+    sent = {}
+    monkeypatch.setattr("api.mail.send_reset_email", lambda to, link: sent.update(to=to, link=link))
+    r = forgot(client, "nobody@example.com")
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert sent == {}
+    conn = storage.get_connection()
+    count = conn.execute("SELECT COUNT(*) FROM password_resets").fetchone()[0]
+    conn.close()
+    assert count == 0
+
+
+def test_a_user_without_a_password_is_not_emailed(client, monkeypatch):
+    smtp_ready(monkeypatch)
+    storage.add_user("nopass@example.com")
+    sent = {}
+    monkeypatch.setattr("api.mail.send_reset_email", lambda to, link: sent.update(to=to, link=link))
+    r = forgot(client, "nopass@example.com")
+    assert r.status_code == 200 and sent == {}
+
+
+def test_forgot_emails_a_link_and_stores_only_the_hash(client, monkeypatch):
+    from urllib.parse import parse_qs, urlparse
+    smtp_ready(monkeypatch)
+    register(client)
+    sent = {}
+    monkeypatch.setattr("api.mail.send_reset_email", lambda to, link: sent.update(to=to, link=link))
+    assert forgot(client).status_code == 200
+    assert sent["to"] == EMAIL
+    token = parse_qs(urlparse(sent["link"]).query)["token"][0]
+    assert sent["link"] == f"{PUBLIC}/reset?token={token}"
+    assert storage.find_password_reset(token) is None
+    stored = storage.find_password_reset(security.token_hash(token))
+    assert stored is not None and stored.used_at is None and stored.expires_at
+    assert token not in stored.expires_at
+
+
+def test_reset_changes_the_password_once_and_a_newer_link_replaces_the_old_one(client, monkeypatch):
+    from urllib.parse import parse_qs, urlparse
+    smtp_ready(monkeypatch)
+    register(client)
+    sent = {}
+    monkeypatch.setattr("api.mail.send_reset_email", lambda to, link: sent.update(link=link))
+
+    assert forgot(client).status_code == 200
+    first = parse_qs(urlparse(sent["link"]).query)["token"][0]
+    assert forgot(client).status_code == 200
+    second = parse_qs(urlparse(sent["link"]).query)["token"][0]
+    assert first != second
+    assert reset(client, first).status_code == 400
+    assert reset(client, second, "a brand new password").status_code == 200
+    assert reset(client, second, "yet another password").status_code == 400
+    assert login(client, password=PASSWORD).status_code == 401
+    assert login(client, password="a brand new password").status_code == 200
+
+
+def test_an_expired_reset_link_is_rejected(client):
+    uid = register(client).json()["id"]
+    digest = security.token_hash("expired-token")
+    storage.create_password_reset(uid, digest, "2000-01-01T00:00:00")
+    r = reset(client, "expired-token")
+    assert r.status_code == 400 and r.json()["error"] == auth.RESET_INVALID
+    assert login(client).status_code == 200
+
+
+def test_reset_logs_out_every_existing_session(client, monkeypatch):
+    from urllib.parse import parse_qs, urlparse
+    smtp_ready(monkeypatch)
+    register(client)
+    old = login(client).json()["token"]
+    sent = {}
+    monkeypatch.setattr("api.mail.send_reset_email", lambda to, link: sent.update(link=link))
+    forgot(client)
+    token = parse_qs(urlparse(sent["link"]).query)["token"][0]
+    assert reset(client, token, "a brand new password").status_code == 200
+    assert client.get("/api/me", headers=bearer(old)).status_code == 401
+    fresh = login(client, password="a brand new password").json()["token"]
+    assert client.get("/api/me", headers=bearer(fresh)).status_code == 200
+
+
+def test_reset_rejects_a_short_password_and_keeps_the_link(client):
+    uid = register(client).json()["id"]
+    digest = security.token_hash("still-good")
+    later = (datetime.now() + timedelta(minutes=30)).isoformat(timespec="seconds")
+    storage.create_password_reset(uid, digest, later)
+    assert reset(client, "still-good", "short").status_code == 400
+    assert storage.find_password_reset(digest).used_at is None
+    assert reset(client, "still-good", "long enough").status_code == 200
+
+
+def test_a_failed_send_does_not_pretend_the_email_went_out(client, monkeypatch):
+    smtp_ready(monkeypatch)
+    register(client)
+
+    def boom(to, link):
+        raise OSError("smtp down")
+
+    monkeypatch.setattr("api.mail.send_reset_email", boom)
+    r = forgot(client)
+    assert r.status_code == 503
+    assert r.json()["error"] == "Could not send the reset email. Try again later."
+
+
+def test_reset_requests_are_rate_limited(client, monkeypatch):
+    smtp_ready(monkeypatch)
+    monkeypatch.setattr("api.mail.send_reset_email", lambda to, link: None)
+    for _ in range(5):
+        assert forgot(client, "nobody@example.com").status_code == 200
+    assert forgot(client, "nobody@example.com").status_code == 429
+
+
+def test_the_reset_limit_is_per_email_as_well_as_per_client(client, monkeypatch):
+    smtp_ready(monkeypatch)
+    monkeypatch.setattr("api.mail.send_reset_email", lambda to, link: None)
+    auth.reset_limiter.reset()
+    for _ in range(5):
+        auth.reset_limiter.allow("email:" + EMAIL)
+    assert forgot(client, EMAIL).status_code == 429
+    assert forgot(client, "other@example.com").status_code == 200
+
 
 def test_the_api_is_mounted_on_the_reflex_app():
     import StudyFlow.StudyFlow as page
