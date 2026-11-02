@@ -348,8 +348,9 @@ def test_generate_places_the_work_into_the_saved_study_periods():
     """
     The mentor's controlled example, relative to today: study time
     today, tomorrow and the day after (4-6 PM); Math 2h due in 3
-    days; Physics 5h due in 4 days. Math takes today, Physics the
-    next two days, 1h of Physics left over.
+    days; Physics 5h due in 4 days. Math's 2 hours are shared as 40
+    minutes each day, Physics fills the rest of each block, and 1.75h
+    of Physics is left over (shown as 1.8).
     """
     state = fresh_state()
     slot_on(0, 16, 18)
@@ -360,20 +361,25 @@ def test_generate_places_the_work_into_the_saved_study_periods():
     run(state.generate_study_plan())
 
     assert state.has_plan is True and state.plan_message == ""
-    assert [(b.label, b.time) for b in state.plan_days[0].blocks] == [("Math", "4 PM–6 PM")]
-    assert [b.label for b in state.plan_days[1].blocks] == ["Physics"]
-    assert [b.label for b in state.plan_days[2].blocks] == ["Physics"]
-    assert state.today_plan == [{"time": "4 PM–6 PM", "label": "Math", "is_break": "no"}]
-    assert (state.plan_required, state.plan_scheduled, state.plan_unscheduled, state.plan_completion) == ("7.0", "6.0", "1.0", "86")
-    assert state.progress_value == 86
+    shared = [("Math", "4 PM–4:40 PM"), ("Break", "4:40 PM–4:55 PM"), ("Physics", "4:55 PM–6 PM")]
+    assert [(b.label, b.time) for b in state.plan_days[0].blocks] == shared
+    assert [(b.label, b.time) for b in state.plan_days[1].blocks] == shared
+    assert [(b.label, b.time) for b in state.plan_days[2].blocks] == shared
+    assert state.today_plan == [
+        {"time": "4 PM–4:40 PM", "label": "Math", "is_break": "no"},
+        {"time": "4:40 PM–4:55 PM", "label": "Break", "is_break": "yes"},
+        {"time": "4:55 PM–6 PM", "label": "Physics", "is_break": "no"},
+    ]
+    assert (state.plan_required, state.plan_scheduled, state.plan_unscheduled, state.plan_completion) == ("7.0", "5.2", "1.8", "75")
+    assert state.progress_value == 75
 
     by_name = {r.name: r for r in state.plan_statuses}
     assert by_name["Math"].status == "COMPLETE" and by_name["Math"].percent == 100
-    assert by_name["Physics"].status == "PARTIAL" and by_name["Physics"].remaining == "1.0"
-    assert by_name["Physics"].percent == 80
+    assert by_name["Physics"].status == "PARTIAL" and by_name["Physics"].remaining == "1.8"
+    assert by_name["Physics"].percent == 65
     assert by_name["Physics"].subject == "Chemistry"          # fill()'s default subject
     # The assignment cards now carry the real risk instead of NOT RATED.
-    # Physics has 1h left and every hour before its deadline is taken.
+    # Physics has 1.75h left and every hour before its deadline is taken.
     assert {r["name"]: r["risk"] for r in state.assignments} == {"Math": "LOW", "Physics": "CRITICAL"}
 
 

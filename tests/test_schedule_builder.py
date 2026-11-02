@@ -14,7 +14,9 @@ consecutive study time: a run of work inside one block is capped, and
 the same assignment continues after a break. Part 7 is the v1.1
 configurable minimum session length (policy B): a chunk is at least
 the minimum unless it is the assignment's last piece, and a chunk
-after a break is also at least a break long.
+after a break is also at least a break long. Part 8 shares one
+assignment across the days before it is due, with a 4-hour daily
+preference that yields when the deadline needs a longer day.
 """
 
 from datetime import date, timedelta
@@ -26,6 +28,7 @@ from schedule_analyzer import assignment_status
 from schedule_builder import (
     BREAK_LABEL,
     DEFAULT_MAX_CONSECUTIVE_MINUTES,
+    DEFAULT_MAX_DAY_MINUTES,
     DEFAULT_MIN_SESSION_MINUTES,
     ScheduledBlock,
     ScheduleResult,
@@ -240,15 +243,16 @@ def test_build_schedule_respects_the_deadline_rule():
 
 def test_physics_lab_due_tuesday_recognises_wednesday_is_too_late():
     """
-    The Phase 3.1 example. Physics Lab is due Tuesday and needs 3
-    hours, with 2-hour slots Monday to Wednesday. The third hour must
-    not spill onto Wednesday: Wednesday is too late.
+    The Phase 3.1 example, shared across the days before the deadline.
+    Physics Lab is due Tuesday and needs 3 hours, with 2-hour slots
+    Monday to Wednesday. Monday and Tuesday each get 90 minutes.
+    The third hour must not spill onto Wednesday: Wednesday is too late.
     """
     slots = [slot(d, 16, 18) for d in (Weekday.MONDAY, Weekday.TUESDAY, Weekday.WEDNESDAY)]
     assignments = [task("Physics Lab", TUESDAY, 3)]
     result = build_schedule(assignments, slots, today=MONDAY)
-    assert minutes_of(result, MONDAY, "Physics Lab") == 120
-    assert minutes_of(result, TUESDAY, "Physics Lab") == 60
+    assert minutes_of(result, MONDAY, "Physics Lab") == 90
+    assert minutes_of(result, TUESDAY, "Physics Lab") == 90
     assert "Physics Lab" not in labels(result, WEDNESDAY)
     assert result.unscheduled == []
 
@@ -373,8 +377,10 @@ def test_earlier_deadline_is_protected():
     hours short of its deadline.
 
     The protection is that placement orders by deadline, not by that
-    rank: Math gets Monday and finishes; Physics gets the rest and
-    the hour that does not fit is reported against Physics.
+    rank: Math's 2 hours are shared across Monday, Tuesday and
+    Wednesday and it finishes. Physics takes what is left on those
+    days. Each day pays a break between them, so Physics is 1.75
+    hours short rather than 1.
     """
     slots = [slot(d, 16, 18) for d in (Weekday.MONDAY, Weekday.TUESDAY, Weekday.WEDNESDAY)]
     physics = task("Physics", FRIDAY, 5, Priority.HIGH)
@@ -387,7 +393,7 @@ def test_earlier_deadline_is_protected():
     assert not any(a.name == "Math" for a, _ in result.unscheduled)
 
     # The shortfall lands on Physics, the one with time to spare.
-    assert result.unscheduled == [(physics, 1.0)]
+    assert result.unscheduled == [(physics, 1.75)]
     assert_no_overlaps(result)
 
 
@@ -595,33 +601,31 @@ def test_impossible_task_does_not_starve_an_achievable_one_with_the_same_deadlin
     ranks CS first (same date and priority, bigger task first), and
     on its own that lets CS take all six hours.
 
-    Pure Math can be finished, CS cannot, so Pure Math goes first and
-    CS gets everything left: Monday 5:15-6 after the break, and
-    Tuesday as 120 / break / 45 under the 2-hour maximum, 3h30 in
-    total.
+    Pure Math can be finished, CS cannot, so Pure Math goes first.
+    Its 2 hours are shared as an hour each day, and CS gets everything
+    left: 105 minutes after the break on Monday and again on Tuesday,
+    3h30 in total.
     """
     cs = task("CS Project", WEDNESDAY, 20, Priority.HIGH)
     math = task("Pure Math", WEDNESDAY, 2, Priority.HIGH)
     result = build_schedule([cs, math], SIX_HOURS, today=MONDAY)
 
-    assert minutes_of(result, MONDAY, "Pure Math") == 120
+    assert minutes_of(result, MONDAY, "Pure Math") == 60
+    assert minutes_of(result, TUESDAY, "Pure Math") == 60
     assert status_of(result, math) == "COMPLETE"
-    assert minutes_of(result, MONDAY, "CS Project") == 45
-    assert minutes_of(result, TUESDAY, "CS Project") == 165
+    assert minutes_of(result, MONDAY, "CS Project") == 105
+    assert minutes_of(result, TUESDAY, "CS Project") == 105
     assert status_of(result, cs) == "PARTIAL"
     assert unscheduled_of(result) == {"CS Project": 16.5}
 
     # The timetable itself.
-    assert [(b.format_time_range(), b.label) for b in result.by_date[MONDAY]] == [
-        ("3 PM–5 PM", "Pure Math"),
-        ("5 PM–5:15 PM", "Break"),
-        ("5:15 PM–6 PM", "CS Project"),
+    shared = [
+        ("3 PM–4 PM", "Pure Math"),
+        ("4 PM–4:15 PM", "Break"),
+        ("4:15 PM–6 PM", "CS Project"),
     ]
-    assert [(b.format_time_range(), b.label) for b in result.by_date[TUESDAY]] == [
-        ("3 PM–5 PM", "CS Project"),
-        ("5 PM–5:15 PM", "Break"),
-        ("5:15 PM–6 PM", "CS Project"),
-    ]
+    assert [(b.format_time_range(), b.label) for b in result.by_date[MONDAY]] == shared
+    assert [(b.format_time_range(), b.label) for b in result.by_date[TUESDAY]] == shared
     assert_no_overlaps(result)
 
 
@@ -631,7 +635,8 @@ def test_achievable_first_ignores_priority_within_a_deadline():
     math = task("Pure Math", WEDNESDAY, 2, Priority.LOW)
     result = build_schedule([cs, math], SIX_HOURS, today=MONDAY)
 
-    assert minutes_of(result, MONDAY, "Pure Math") == 120
+    assert minutes_of(result, MONDAY, "Pure Math") == 60
+    assert minutes_of(result, TUESDAY, "Pure Math") == 60
     assert status_of(result, math) == "COMPLETE"
     assert minutes_of(result, MONDAY, "CS Project") + minutes_of(result, TUESDAY, "CS Project") == 210
     assert unscheduled_of(result) == {"CS Project": 16.5}
@@ -684,12 +689,10 @@ def test_three_way_same_deadline():
     CS 20h HIGH, Math 2h HIGH, Chemistry 3h LOW, all due Wednesday,
     6h available. Math and Chemistry can both be finished (Phase 2
     order among them: Math, then Chemistry); CS cannot and comes
-    last. Chemistry's 135 Tuesday minutes run as 120 / break / 15
-    under the 2-hour maximum (the 15 is Chemistry's final piece, so
-    the 30-minute minimum allows it). The 15 minutes left after that
-    would be a non-final sliver of CS, under the minimum, so they
-    stay idle. Chemistry already took Monday's 45, so CS, which
-    cannot be finished anyway, gets nothing this week.
+    last. Math's 2 hours are shared as an hour each day, and
+    Chemistry's 3 hours as 90 minutes each day. Each 3-hour block
+    then has 15 minutes idle, too small for a break plus a session,
+    so CS gets nothing this week.
     """
     cs = task("CS Project", WEDNESDAY, 20, Priority.HIGH)
     math = task("Pure Math", WEDNESDAY, 2, Priority.HIGH)
@@ -700,8 +703,8 @@ def test_three_way_same_deadline():
     assert status_of(result, chem) == "COMPLETE"
     assert status_of(result, cs) == "UNSCHEDULED"
     assert labels(result, MONDAY) == ["Pure Math", "Break", "Chemistry"]
-    assert labels(result, TUESDAY) == ["Chemistry", "Break", "Chemistry"]
-    assert minutes_of(result, TUESDAY, "Chemistry") == 135
+    assert labels(result, TUESDAY) == ["Pure Math", "Break", "Chemistry"]
+    assert minutes_of(result, MONDAY, "Chemistry") == minutes_of(result, TUESDAY, "Chemistry") == 90
     assert minutes_of(result, MONDAY, "CS Project") == minutes_of(result, TUESDAY, "CS Project") == 0
     assert unscheduled_of(result) == {"CS Project": 20.0}
     assert_no_overlaps(result)
@@ -854,15 +857,11 @@ def test_demo_week_has_no_short_session_after_a_break():
     The end-to-end demo week (weekdays 4-6 PM, Saturday 10-1,
     Sunday 2-5) with Pure Math Practice at 1h44 instead of 2h. Before
     the floor, Wednesday was Pure Math 104 minutes, a 15-minute break,
-    then a 1-minute Biology Lab session. Now Wednesday ends after Pure
-    Math, Biology takes all of Thursday, and no break anywhere in the
-    week is followed by a session shorter than the break. Every
-    assignment still finishes.
-
-    The demo's other short chunk, the last 15 minutes of Computer
-    Science on Monday, is the FIRST chunk of an otherwise empty block.
-    The floor is about breaks and leaves it alone; whether a session
-    may be that short at all is a separate decision.
+    then a 1-minute Biology Lab session. Pure Math is now shared
+    across the days before it is due, and every break in the week is
+    followed by a session at least as long as the break. Biology,
+    Mathematics IA and Computer Science still finish. French does not:
+    the gaps left by the share are shorter than a break plus a session.
     """
     wednesday = date(2026, 9, 9)
     slots = [slot(d, 16, 18) for d in (Weekday.MONDAY, Weekday.TUESDAY, Weekday.WEDNESDAY,
@@ -878,10 +877,10 @@ def test_demo_week_has_no_short_session_after_a_break():
     ]
     result = build_schedule(assignments, slots, today=wednesday, break_minutes=15)
 
-    assert labels(result, wednesday) == ["Pure Math Practice"]
-    assert minutes_of(result, wednesday, "Biology Lab") == 0
-    assert minutes_of(result, wednesday + timedelta(days=1), "Biology Lab") == 120
-    assert result.unscheduled == []
+    assert minutes_of(result, wednesday, "Biology Lab") >= 15
+    assert result.unscheduled == [(assignments[-2], 1.0)]          # French, the one the gaps cannot hold
+    assert status_of(result, assignments[-1]) == "COMPLETE"        # Pure Math Practice
+    assert status_of(result, assignments[2]) == "COMPLETE"         # Biology Lab
     assert_no_short_session_after_a_break(result, 15)
     assert_no_overlaps(result)
 
@@ -964,18 +963,20 @@ def test_none_still_means_unlimited_when_asked_for():
 
 def test_default_keeps_earlier_deadline_protection_and_its_numbers():
     """
-    Phase 3.2's scenario uses 2h blocks, which the default never
-    splits, so the protection and its exact minutes are unchanged:
-    Math finishes Monday and the 1h shortfall is Physics's.
+    Phase 3.2's scenario uses 2h blocks, which the default consecutive
+    cap never splits. Math's 2 hours are shared as 40 minutes a day
+    and it finishes; Physics takes the 65 minutes after each break,
+    and the 1.75h shortfall is Physics's.
     """
     slots = [slot(d, 16, 18) for d in (Weekday.MONDAY, Weekday.TUESDAY, Weekday.WEDNESDAY)]
     physics = task("Physics", FRIDAY, 5, Priority.HIGH)
     math = task("Math", THURSDAY, 2)
     result = build_schedule([physics, math], slots, today=MONDAY)
-    assert entries(result, MONDAY) == [("Math", 120)]
-    assert entries(result, TUESDAY) == [("Physics", 120)]
-    assert entries(result, WEDNESDAY) == [("Physics", 120)]
-    assert result.unscheduled == [(physics, 1.0)]
+    shared = [("Math", 40), ("Break", 15), ("Physics", 65)]
+    assert entries(result, MONDAY) == shared
+    assert entries(result, TUESDAY) == shared
+    assert entries(result, WEDNESDAY) == shared
+    assert result.unscheduled == [(physics, 1.75)]
 
 
 def test_three_hours_in_a_three_hour_block_is_split_at_ninety_minutes():
@@ -998,11 +999,14 @@ def test_three_hours_in_a_three_hour_block_is_split_at_ninety_minutes():
 
 
 def test_the_remainder_continues_in_the_next_block():
-    """With a Tuesday block available, the 15 minutes left over land there as its first chunk."""
-    slots = [slot(Weekday.MONDAY, 15, 18), slot(Weekday.TUESDAY, 16, 18)]
-    result = build_schedule([task("Long", WEDNESDAY, 3)], slots, today=MONDAY, max_consecutive_minutes=90)
-    assert entries(result, MONDAY) == [("Long", 90), ("Break", 15), ("Long", 75)]
-    assert entries(result, TUESDAY) == [("Long", 15)]
+    """
+    One eligible day, two blocks, cap 90. The first block holds
+    90 / break / 75, and the last 15 minutes land in the later block
+    as its first chunk.
+    """
+    slots = [slot(Weekday.MONDAY, 15, 18), slot(Weekday.MONDAY, 19, 21)]
+    result = build_schedule([task("Long", MONDAY, 3)], slots, today=MONDAY, max_consecutive_minutes=90)
+    assert entries(result, MONDAY) == [("Long", 90), ("Break", 15), ("Long", 75), ("Long", 15)]
     assert result.unscheduled == []
 
 
@@ -1134,17 +1138,18 @@ def test_run_counter_resets_after_a_switch_break():
 def test_achievable_first_holds_with_a_maximum():
     """
     The Part 4 example (CS 20h and Pure Math 2h, same deadline, two 3h
-    blocks) at the default. Pure Math is still placed first and
-    finishes in one 120-minute run; CS gets everything left, with a
-    cap break inside Tuesday: 45 + 120 + 45 = 210 minutes. Passing
-    120 explicitly gives the same schedule as the default.
+    blocks) at the default. Pure Math is still placed first and its
+    2 hours are shared as an hour each day; CS gets the 105 minutes
+    after each break, 210 minutes in total. Passing 120 explicitly
+    gives the same schedule as the default.
     """
     cs = task("CS Project", WEDNESDAY, 20, Priority.HIGH)
     math = task("Pure Math", WEDNESDAY, 2, Priority.HIGH)
     result = build_schedule([cs, math], SIX_HOURS, today=MONDAY, max_consecutive_minutes=120)
     assert result == build_schedule([cs, math], SIX_HOURS, today=MONDAY)
-    assert entries(result, MONDAY) == [("Pure Math", 120), ("Break", 15), ("CS Project", 45)]
-    assert entries(result, TUESDAY) == [("CS Project", 120), ("Break", 15), ("CS Project", 45)]
+    shared = [("Pure Math", 60), ("Break", 15), ("CS Project", 105)]
+    assert entries(result, MONDAY) == shared
+    assert entries(result, TUESDAY) == shared
     assert assignment_status(result, math) == "COMPLETE"
     assert unscheduled_of(result) == {"CS Project": 16.5}
     assert_no_overlaps(result)
@@ -1153,29 +1158,21 @@ def test_achievable_first_holds_with_a_maximum():
 def test_earlier_deadline_is_still_protected_with_a_maximum():
     """
     Phase 3.2's scenario at max 90 (2h blocks Monday to Wednesday;
-    Math 2h due Thursday, Physics 5h HIGH due Friday). Math still
-    finishes first: 90 on Monday (the 15 that would follow the break
-    is under the 30-minute minimum and not Math's last piece, since
-    30 remain), then its final 30 on Tuesday. Physics takes what is
-    left, 75 after Tuesday's break and 90 on Wednesday (the 15 after
-    a break there is refused too), and the whole shortfall is still
-    charged to Physics.
+    Math 2h due Thursday, Physics 5h HIGH due Friday). The shared
+    pieces are 40 and 65 minutes, both under 90, so the cap does not
+    split them. Math still finishes, and the shortfall is still
+    Physics's. The same schedule is produced with no extra cap.
     """
     slots = [slot(d, 16, 18) for d in (Weekday.MONDAY, Weekday.TUESDAY, Weekday.WEDNESDAY)]
     physics = task("Physics", FRIDAY, 5, Priority.HIGH)
     math = task("Math", THURSDAY, 2)
     result = build_schedule([physics, math], slots, today=MONDAY, max_consecutive_minutes=90)
-    assert entries(result, MONDAY) == [("Math", 90)]
-    assert entries(result, TUESDAY) == [("Math", 30), ("Break", 15), ("Physics", 75)]
-    assert entries(result, WEDNESDAY) == [("Physics", 90)]
+    shared = [("Math", 40), ("Break", 15), ("Physics", 65)]
+    assert entries(result, MONDAY) == entries(result, TUESDAY) == entries(result, WEDNESDAY) == shared
     assert assignment_status(result, math) == "COMPLETE"
-    assert result.unscheduled == [(physics, 2.25)]
+    assert result.unscheduled == [(physics, 1.75)]
     assert_no_overlaps(result)
-
-    # And with no cap the original expectations hold unchanged.
-    result = build_schedule([physics, math], slots, today=MONDAY)
-    assert entries(result, MONDAY) == [("Math", 120)]
-    assert result.unscheduled == [(physics, 1.0)]
+    assert result == build_schedule([physics, math], slots, today=MONDAY)
 
 
 # =====================================================================
@@ -1261,11 +1258,23 @@ def test_no_break_is_paid_for_a_final_piece_shorter_than_a_break(length):
 
 
 def test_cap_remainder_under_the_minimum_moves_to_the_next_block_as_a_final_piece():
-    """130 minutes at cap 120: Monday 120, Tuesday the last 10 as its first chunk."""
+    """
+    130 minutes due Monday, two blocks that day, cap 120. The first
+    block takes 120 and the last 10, under the minimum but the final
+    piece, lands in the later block.
+    """
+    slots = [slot(Weekday.MONDAY, 16, 18), slot(Weekday.MONDAY, 19, 21)]
+    result = build_schedule([task("A", MONDAY, minutes(130))], slots, today=MONDAY, min_session_minutes=30)
+    assert entries(result, MONDAY) == [("A", 120), ("A", 10)]
+    assert result.unscheduled == []
+
+
+def test_two_eligible_days_share_130_minutes_instead_of_leaving_a_10_minute_tail():
+    """130 minutes due Wednesday is 65 and 65, both above the minimum, so no 10-minute piece."""
     slots = [slot(Weekday.MONDAY, 16, 18), slot(Weekday.TUESDAY, 16, 18)]
     result = build_schedule([task("A", WEDNESDAY, minutes(130))], slots, today=MONDAY, min_session_minutes=30)
-    assert entries(result, MONDAY) == [("A", 120)]
-    assert entries(result, TUESDAY) == [("A", 10)]
+    assert entries(result, MONDAY) == [("A", 65)]
+    assert entries(result, TUESDAY) == [("A", 65)]
     assert result.unscheduled == []
 
 
@@ -1284,8 +1293,9 @@ def test_achievable_first_is_unchanged_by_the_minimum():
     cs = task("CS Project", WEDNESDAY, 20, Priority.HIGH)
     math = task("Pure Math", WEDNESDAY, 2, Priority.HIGH)
     result = build_schedule([cs, math], SIX_HOURS, today=MONDAY, min_session_minutes=30)
-    assert entries(result, MONDAY) == [("Pure Math", 120), ("Break", 15), ("CS Project", 45)]
-    assert entries(result, TUESDAY) == [("CS Project", 120), ("Break", 15), ("CS Project", 45)]
+    shared = [("Pure Math", 60), ("Break", 15), ("CS Project", 105)]
+    assert entries(result, MONDAY) == shared
+    assert entries(result, TUESDAY) == shared
     assert unscheduled_of(result) == {"CS Project": 16.5}
     assert result == build_schedule([cs, math], SIX_HOURS, today=MONDAY)
 
@@ -1295,10 +1305,9 @@ def test_earlier_deadline_protection_is_unchanged_by_the_minimum():
     physics = task("Physics", FRIDAY, 5, Priority.HIGH)
     math = task("Math", THURSDAY, 2)
     result = build_schedule([physics, math], slots, today=MONDAY, min_session_minutes=30)
-    assert entries(result, MONDAY) == [("Math", 120)]
-    assert entries(result, TUESDAY) == [("Physics", 120)]
-    assert entries(result, WEDNESDAY) == [("Physics", 120)]
-    assert result.unscheduled == [(physics, 1.0)]
+    shared = [("Math", 40), ("Break", 15), ("Physics", 65)]
+    assert entries(result, MONDAY) == entries(result, TUESDAY) == entries(result, WEDNESDAY) == shared
+    assert result.unscheduled == [(physics, 1.75)]
     assert result == build_schedule([physics, math], slots, today=MONDAY)
 
 
@@ -1341,3 +1350,90 @@ def test_invalid_minimums_are_refused():
         build_schedule(a, slots, today=MONDAY, max_consecutive_minutes=90, min_session_minutes=91)
     build_schedule(a, slots, today=MONDAY, min_session_minutes=120)                  # equal to the cap is fine
     build_schedule(a, slots, today=MONDAY, max_consecutive_minutes=None, min_session_minutes=130)
+
+
+# =====================================================================
+# Part 8 — spread the work, with a 4-hour daily preference
+# =====================================================================
+#
+# One assignment's minutes are shared across the days from today
+# through its due date. The 4-hour figure is a preference: the second
+# pass ignores it when that is what the deadline requires. Overdue
+# work is not spread. A share shorter than the minimum session stays
+# one early session instead of becoming a string of tiny ones.
+
+def test_default_daily_preference_is_four_hours():
+    assert DEFAULT_MAX_DAY_MINUTES == 240
+
+
+def test_three_hours_due_tuesday_are_shared_across_both_days():
+    """2-hour slots Monday to Wednesday, 3 hours due Tuesday: 90 and 90, nothing on Wednesday."""
+    slots = [slot(d, 16, 18) for d in (Weekday.MONDAY, Weekday.TUESDAY, Weekday.WEDNESDAY)]
+    result = build_schedule([task("Physics Lab", TUESDAY, 3)], slots, today=MONDAY)
+    assert minutes_of(result, MONDAY, "Physics Lab") == 90
+    assert minutes_of(result, TUESDAY, "Physics Lab") == 90
+    assert WEDNESDAY not in result.by_date
+    assert result.unscheduled == []
+
+
+def test_spreading_still_happens_when_there_is_no_daily_cap():
+    """None removes the 4-hour preference. The even share stays."""
+    slots = [slot(d, 16, 18) for d in (Weekday.MONDAY, Weekday.TUESDAY)]
+    result = build_schedule([task("Physics Lab", TUESDAY, 3)], slots, today=MONDAY, max_day_minutes=None)
+    assert minutes_of(result, MONDAY, "Physics Lab") == 90
+    assert minutes_of(result, TUESDAY, "Physics Lab") == 90
+
+
+def test_one_eligible_day_is_not_cut_by_the_daily_preference():
+    """Due today, one 6-hour block, 5 hours of work: the whole day is used."""
+    slots = [slot(Weekday.MONDAY, 9, 15)]
+    result = build_schedule(
+        [task("Due today", MONDAY, 5)], slots, today=MONDAY,
+        break_minutes=0, max_consecutive_minutes=None,
+    )
+    assert minutes_of(result, MONDAY, "Due today") == 300
+    assert result.unscheduled == []
+
+
+def test_daily_preference_yields_when_the_deadline_needs_a_longer_day():
+    """
+    9 hours due Tuesday and 6-hour blocks Monday and Tuesday. Four
+    hours each day cannot finish it, so Monday runs to 5 hours and
+    Tuesday keeps the preference. Nothing is left over.
+    """
+    slots = [slot(Weekday.MONDAY, 8, 14), slot(Weekday.TUESDAY, 8, 14)]
+    task_due = task("Long", TUESDAY, 9)
+    result = build_schedule(
+        [task_due], slots, today=MONDAY,
+        break_minutes=0, max_consecutive_minutes=None, max_day_minutes=240,
+    )
+    assert minutes_of(result, MONDAY, "Long") == 300
+    assert minutes_of(result, TUESDAY, "Long") == 240
+    assert result.unscheduled == []
+
+
+def test_overdue_work_is_placed_as_early_as_possible_and_not_spread():
+    """A missed 3-hour task fills Monday's 2 hours before it touches Tuesday."""
+    slots = [slot(Weekday.MONDAY, 16, 18), slot(Weekday.TUESDAY, 16, 18)]
+    result = build_schedule(
+        [task("Was due last week", MONDAY - timedelta(days=7), 3)], slots, today=MONDAY,
+    )
+    assert minutes_of(result, MONDAY, "Was due last week") == 120
+    assert minutes_of(result, TUESDAY, "Was due last week") == 60
+    assert result.unscheduled == []
+
+
+def test_a_share_shorter_than_the_minimum_session_stays_one_early_session():
+    """One hour across five days would be 12 minutes a day. It stays a single hour on Monday."""
+    slots = [slot(d, 16, 18) for d in
+             (Weekday.MONDAY, Weekday.TUESDAY, Weekday.WEDNESDAY, Weekday.THURSDAY, Weekday.FRIDAY)]
+    result = build_schedule([task("Worksheet", FRIDAY, 1)], slots, today=MONDAY)
+    assert minutes_of(result, MONDAY, "Worksheet") == 60
+    assert TUESDAY not in result.by_date
+    assert result.unscheduled == []
+
+
+def test_invalid_daily_preference_is_refused():
+    slots = [slot(Weekday.MONDAY, 16, 18)]
+    with pytest.raises(ValueError, match="max_day_minutes"):
+        build_schedule([task("T", TUESDAY, 1)], slots, today=MONDAY, max_day_minutes=0)

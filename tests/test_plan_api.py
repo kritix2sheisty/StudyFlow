@@ -59,7 +59,8 @@ def ben(client):
 
 
 def seed(client, headers, math_hours=2, physics_hours=5):
-    """The mentor's controlled example: two 2h slots on days 0 and 1, Math due day 3, Physics due day 4."""
+    """Two 2h slots on days 0 and 1, Math 2h due day 3, Physics 5h due day 4.
+    Math is shared as an hour each day; Physics takes what a break leaves."""
     client.post("/api/study-time", json={"weekday": weekday(0), "start_hour": 16, "end_hour": 18}, headers=headers)
     client.post("/api/study-time", json={"weekday": weekday(1), "start_hour": 16, "end_hour": 18}, headers=headers)
     client.post("/api/assignments", json={"name": "Math", "subject": "Mathematics", "due_date": days(3),
@@ -96,8 +97,8 @@ def test_generate_builds_the_plan_the_engine_would(client, ana):
 
     assert body["fresh"] is True and body["generated_at"]
     assert body["required_hours"] == plan.required_hours == 7.0
-    assert body["scheduled_hours"] == plan.scheduled_hours == 4.0
-    assert body["unscheduled_hours"] == plan.unscheduled_hours == 3.0
+    assert body["scheduled_hours"] == plan.scheduled_hours == 3.5
+    assert body["unscheduled_hours"] == plan.unscheduled_hours == 3.5
     assert body["completion_percentage"] == round(plan.completion, 1)
 
     # The schedule, day by day, block by block, is the engine's.
@@ -110,8 +111,8 @@ def test_generate_builds_the_plan_the_engine_would(client, ana):
         for day, blocks in sorted(plan.schedule.by_date.items())
     ]
     assert body["days"] == expected_days
-    assert [b["label"] for b in body["days"][0]["blocks"]] == ["Math"]              # soonest due first
-    assert [b["label"] for b in body["days"][1]["blocks"]] == ["Physics"]
+    assert [b["label"] for b in body["days"][0]["blocks"]] == ["Math", "Break", "Physics"]
+    assert [b["label"] for b in body["days"][1]["blocks"]] == ["Math", "Break", "Physics"]
 
 
 def test_generated_statuses_and_risks_are_the_analyzers_and_optimizers(client, ana):

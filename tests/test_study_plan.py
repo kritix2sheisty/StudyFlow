@@ -13,7 +13,6 @@ from datetime import date, timedelta
 from models import Assignment, Priority, TimeSlot, Weekday
 from schedule_analyzer import (
     STATUS_COMPLETE,
-    STATUS_PARTIAL,
     STATUS_UNSCHEDULED,
     at_risk_assignments,
     completion_percentage,
@@ -41,8 +40,9 @@ def task(name: str, hours: float, due: date = FRIDAY,
 
 def week_example():
     """
-    Two 2-hour slots and 7 hours of work: Physics fits, Math is
-    partly placed, CS gets nothing, Essay is already done.
+    Two 2-hour slots and 7 hours of work. Physics is due first and
+    its 3 hours are shared as 90 minutes each day, which finishes it
+    and leaves gaps too small for Math or CS. Essay is already done.
     """
     slots = [slot(Weekday.MONDAY, 16, 18), slot(Weekday.TUESDAY, 16, 18)]
     assignments = [
@@ -90,7 +90,7 @@ def test_analyses_and_at_risk_match_the_analyzer():
     assignments, slots = week_example()
     plan = generate_study_plan(assignments, slots, today=MONDAY)
     statuses = {row.assignment.name: row.status for row in plan.analyses}
-    assert statuses == {"CS": STATUS_UNSCHEDULED, "Physics": STATUS_COMPLETE, "Math": STATUS_PARTIAL}
+    assert statuses == {"CS": STATUS_UNSCHEDULED, "Physics": STATUS_COMPLETE, "Math": STATUS_UNSCHEDULED}
     assert plan.at_risk == at_risk_assignments(plan.schedule, assignments)
     assert [a.name for a in plan.at_risk] == ["CS", "Math"]
 
@@ -148,6 +148,22 @@ def test_min_session_minutes_passes_through_to_the_builder():
         assignments, slots, today=MONDAY, min_session_minutes=30).unscheduled
 
 
+def test_max_day_minutes_passes_through_to_the_builder():
+    """A 2-hour preference splits a 6-hour task due Tuesday into 2 hours and 4 hours."""
+    slots = [slot(Weekday.MONDAY, 8, 14), slot(Weekday.TUESDAY, 8, 14)]
+    assignments = [task("Long", 6, due=TUESDAY)]
+    plan = generate_study_plan(
+        assignments, slots, today=MONDAY,
+        break_minutes=0, max_consecutive_minutes=None, max_day_minutes=120,
+    )
+    assert plan.schedule == build_schedule(
+        assignments, slots, today=MONDAY,
+        break_minutes=0, max_consecutive_minutes=None, max_day_minutes=120,
+    )
+    assert [(b.label, b.end_minute - b.start_minute) for b in plan.schedule.by_date[MONDAY]] == [("Long", 240)]
+    assert [(b.label, b.end_minute - b.start_minute) for b in plan.schedule.by_date[TUESDAY]] == [("Long", 120)]
+
+
 def test_inputs_are_not_mutated():
     assignments, slots = week_example()
     before = [a.name for a in assignments]
@@ -194,7 +210,7 @@ def test_report_shows_the_timetable_with_uppercase_day_headings():
     text = format_study_plan(generate_study_plan(assignments, slots, today=MONDAY))
     assert "MONDAY 2026-08-17" in text
     assert "TUESDAY 2026-08-18" in text
-    assert "  4 PM–6 PM  Physics" in text
+    assert "  4 PM–5:30 PM  Physics" in text
 
 
 def test_report_shows_the_progress_numbers():

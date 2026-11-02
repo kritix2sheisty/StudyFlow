@@ -36,6 +36,7 @@ from schedule_builder import (
     DEFAULT_BREAK_MINUTES,
     DEFAULT_DAYS_AHEAD,
     DEFAULT_MAX_CONSECUTIVE_MINUTES,
+    DEFAULT_MAX_DAY_MINUTES,
     DEFAULT_MIN_SESSION_MINUTES,
     ScheduleResult,
     build_schedule,
@@ -67,6 +68,7 @@ def generate_study_plan(
     days_ahead: int = DEFAULT_DAYS_AHEAD,
     max_consecutive_minutes: Optional[int] = DEFAULT_MAX_CONSECUTIVE_MINUTES,
     min_session_minutes: Optional[int] = DEFAULT_MIN_SESSION_MINUTES,
+    max_day_minutes: Optional[int] = DEFAULT_MAX_DAY_MINUTES,
 ) -> StudyPlan:
     """
     Prioritize, schedule, analyze, flag. Returns a StudyPlan holding
@@ -74,8 +76,9 @@ def generate_study_plan(
 
     `today` defaults to the real date, as it does for the scheduler;
     pass it explicitly in tests. The builder options (`break_minutes`,
-    `days_ahead`, `max_consecutive_minutes`, `min_session_minutes`)
-    are forwarded unchanged.
+    `days_ahead`, `max_consecutive_minutes`, `min_session_minutes`,
+    `max_day_minutes`) are forwarded unchanged. `max_day_minutes` is
+    the 4-hour daily preference; a deadline can still use a longer day.
     """
     today = today or date.today()
     assignments = list(assignments)
@@ -86,6 +89,7 @@ def generate_study_plan(
         break_minutes=break_minutes, days_ahead=days_ahead,
         max_consecutive_minutes=max_consecutive_minutes,
         min_session_minutes=min_session_minutes,
+        max_day_minutes=max_day_minutes,
     )
 
     return StudyPlan(

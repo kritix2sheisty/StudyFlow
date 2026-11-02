@@ -195,14 +195,27 @@ def test_today_lists_todays_sessions_with_their_completion(client, ana, clock):
 
 
 def test_today_leaves_out_other_days_and_breaks(client, ana, clock):
+    """
+    Tomorrow has its own slot. Math is shared across today and tomorrow,
+    so today holds Math, a break, part of CS, and Bio in the evening
+    slot. Today lists the work sessions only, and not tomorrow's half.
+    """
+    client.post("/api/study-time", json={"weekday": weekday(0), "start_hour": 16, "end_hour": 18}, headers=ana)
+    client.post("/api/study-time", json={"weekday": weekday(0), "start_hour": 19, "end_hour": 20}, headers=ana)
     client.post("/api/study-time", json={"weekday": weekday(1), "start_hour": 16, "end_hour": 18}, headers=ana)
+    client.post("/api/assignments", json={"name": "Math", "subject": "Mathematics", "due_date": days(3),
+                                          "estimated_hours": 2, "priority": "HIGH"}, headers=ana)
+    client.post("/api/assignments", json={"name": "CS", "subject": "Computer Science", "due_date": days(4),
+                                          "estimated_hours": 1}, headers=ana)
     client.post("/api/assignments", json={"name": "Bio", "subject": "Biology", "due_date": days(5),
                                           "estimated_hours": 1}, headers=ana)
-    plan = seed_and_plan(client, ana)
-    assert [d["date"] for d in plan["days"]] == [days(0), days(1)]     # Bio lands tomorrow
+    plan = client.post("/api/plan/generate", headers=ana).json()
+    assert [d["date"] for d in plan["days"]] == [days(0), days(1)]
+    assert [b["label"] for b in plan["days"][0]["blocks"]] == ["Math", "Break", "CS", "Bio"]
+    assert "Bio" not in [b["label"] for b in plan["days"][1]["blocks"]]
     clock(9, 0)
     body = client.get("/api/focus/today", headers=ana).json()
-    assert [s["assignment"] for s in body["sessions"]] == ["Math", "CS"]
+    assert [s["assignment"] for s in body["sessions"]] == ["Math", "CS", "Bio"]
     assert all(s["date"] == days(0) for s in body["sessions"])
 
 

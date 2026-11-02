@@ -204,18 +204,18 @@ def test_ratio_with_no_study_time_is_zero():
 def test_ratio_uses_the_real_schedule():
     """
     Through build_schedule: two 2-hour slots, Physics 3h due Tuesday
-    and Math 3h due Wednesday. Physics fits (infinite); Math gets 45
-    minutes after a break, leaving 2.25h against 4h of capacity
-    before Wednesday.
+    and Math 3h due Wednesday. Physics is shared as 90 minutes each
+    day and finishes (infinite). Each day keeps a 30-minute gap, one
+    hour free in all, which a break will not let Math use. Math's
+    3 hours against that hour is a ratio of 1/3.
     """
     slots = week(monday=2, tuesday=2)
     physics = task("Physics", TUESDAY, 3)
     math_hw = task("Math", WEDNESDAY, 3)
     result = build_schedule([physics, math_hw], slots, today=MONDAY)
     assert deadline_risk_ratio(physics, result, slots, MONDAY) == math.inf
-    # Math has 2.25h left, but all 4h before Wednesday are occupied
-    # (Physics 3h, a break, Math's own 45 min): nothing free -> 0.
-    assert deadline_risk_ratio(math_hw, result, slots, MONDAY) == 0.0
+    assert deadline_risk_ratio(math_hw, result, slots, MONDAY) == pytest.approx(1 / 3)
+    assert risk_level(deadline_risk_ratio(math_hw, result, slots, MONDAY)) == RISK_CRITICAL
 
 
 # =====================================================================
@@ -386,11 +386,11 @@ def test_free_capacity_never_goes_negative():
 
 def test_the_demo_scenario_no_longer_says_low_for_work_left_over():
     """
-    Ten hours of slots, all consumed. Before achievable-first, CS (3h)
-    took Friday and French (1h, same deadline) was left out entirely;
-    now French fits Friday's free time and finishes, and CS is the one
-    left short. Either way, the work left over has no free hour before
-    its deadline and must read CRITICAL, not LOW.
+    Ten hours of slots. Essay's 3 hours are shared across Monday and
+    Tuesday, which leaves an hour of gaps, and the later tasks do not
+    all finish. Work that finishes reads LOW. Work that is left over
+    has a ratio of 1 (one free hour, one hour still to do) and reads
+    HIGH, not LOW.
     """
     slots = week(monday=2, tuesday=2, wednesday=2, thursday=2, friday=2)
     assignments = [
@@ -401,9 +401,13 @@ def test_the_demo_scenario_no_longer_says_low_for_work_left_over():
         Assignment(name="French", subject="F", due_date=FRIDAY, estimated_hours=1, priority=Priority.LOW),
     ]
     result = build_schedule(assignments, slots, today=MONDAY)
-    cs, french = assignments[-2], assignments[-1]
-    assert (cs, 2.25) in result.unscheduled
-    assert not any(a is french for a, _ in result.unscheduled)
-    assert free_hours_before_deadline(cs, result, slots, MONDAY) == 0.0
-    assert risk_level(deadline_risk_ratio(cs, result, slots, MONDAY)) == RISK_CRITICAL
-    assert risk_level(deadline_risk_ratio(french, result, slots, MONDAY)) == RISK_LOW
+    essay, bio, maths, cs, french = assignments
+    assert not any(a is essay or a is bio for a, _ in result.unscheduled)
+    assert (maths, 1.0) in result.unscheduled
+    assert (cs, 1.0) in result.unscheduled
+    assert (french, 1.0) in result.unscheduled
+    assert risk_level(deadline_risk_ratio(essay, result, slots, MONDAY)) == RISK_LOW
+    assert risk_level(deadline_risk_ratio(bio, result, slots, MONDAY)) == RISK_LOW
+    for leftover in (maths, cs, french):
+        assert free_hours_before_deadline(leftover, result, slots, MONDAY) == 1.0
+        assert risk_level(deadline_risk_ratio(leftover, result, slots, MONDAY)) == RISK_HIGH

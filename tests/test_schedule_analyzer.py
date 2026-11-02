@@ -293,14 +293,18 @@ def test_status_completed_assignment_is_complete_whatever_the_schedule():
 
 
 def test_status_follows_a_real_schedule():
-    """Through build_schedule: 3h + 2h + 1h wanted, 4h available."""
+    """
+    Through build_schedule: 3h + 2h + 1h wanted, 4h available.
+    Physics is shared as 90 minutes on each 2-hour day and finishes.
+    The 30-minute gaps cannot hold Math or CS after a break.
+    """
     slots = [slot(Weekday.MONDAY, 16, 18), slot(Weekday.TUESDAY, 16, 18)]
     physics = task("Physics", 3, priority=Priority.HIGH)
     math = task("Math", 2, priority=Priority.MEDIUM)
     cs = task("CS", 1, priority=Priority.LOW)
     result = build_schedule([physics, math, cs], slots, today=MONDAY)
     assert assignment_status(result, physics) == STATUS_COMPLETE
-    assert assignment_status(result, math) == STATUS_PARTIAL
+    assert assignment_status(result, math) == STATUS_UNSCHEDULED
     assert assignment_status(result, cs) == STATUS_UNSCHEDULED
 
 
@@ -366,7 +370,7 @@ def test_at_risk_keeps_order_and_mixes_all_cases():
     reading = task("Reading", 0)
     result = build_schedule([physics, math, cs, done, reading], slots, today=MONDAY)
     assert assignment_status(result, physics) == STATUS_COMPLETE
-    assert assignment_status(result, math) == STATUS_PARTIAL
+    assert assignment_status(result, math) == STATUS_UNSCHEDULED
     assert assignment_status(result, cs) == STATUS_UNSCHEDULED
     assert at_risk_assignments(result, [physics, math, cs, done, reading]) == [math, cs]
 

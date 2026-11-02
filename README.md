@@ -137,7 +137,7 @@ module docstring of `scheduler.py`.
 
 ### Future Development
 
-* Improve schedule optimization (spread work evenly, cap hours per day)
+* Prefer a mix of subjects on the same day when several are due together
 * iPhone build of the mobile app (needs the Apple Developer Program)
 * Introduce AI-assisted study recommendations
 
@@ -150,8 +150,10 @@ StudyFlow currently uses a **greedy, deadline-aware** scheduling approach.
 3. Generate concrete study blocks from the student's recurring time slots.
 4. Re-order the assignments by due date, earliest first, using the Phase 2
    ranking to break ties.
-5. Assign each assignment's work to the earliest available blocks on or
-   before its due date, splitting it across blocks when necessary.
+5. Share each assignment's hours across the days from today through its
+   due date. Each day is offered about an even share, and no day is asked
+   for more than 4 hours of study unless that is the only way to meet the
+   deadline. Work that is already overdue is placed as early as possible.
 6. Insert a break between study periods that share a block.
 7. Record any work that could not be scheduled before its due date.
 
@@ -166,11 +168,13 @@ due sooner needed. Ordering placement by deadline instead is a classical
 result: when work can be split, it meets every deadline whenever any order
 can. Phase 2 still decides among assignments that share a due date.
 
-**Known limitations.** Work is front-loaded into the earliest blocks rather
-than spread evenly across the days before a deadline. Breaks can leave a few
-minutes unused. There is no cap on hours per day and no preference for
-variety. Future versions may explore more advanced scheduling and
-optimization techniques once StudyFlow defines what "better" means.
+**Known limitations.** Sharing a task across days can leave a short gap at
+the end of a block, and the next task may be unable to use it once a break
+and a minimum session are required, so a packed week can fit a little less
+than filling each block first. Breaks can also leave a few minutes unused.
+A long block can still be one subject when that is what the deadline needs.
+Future versions may explore more advanced scheduling once StudyFlow defines
+what "better" means beyond meeting deadlines and keeping days near four hours.
 
 ## Running the website locally
 

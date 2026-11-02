@@ -5,8 +5,10 @@ mentor's controlled example so the numbers can be worked by hand.
 
 Study time: Monday, Tuesday, Wednesday 4-6 PM (6 hours).
 Assignments: Math 2h due Thursday, Physics 5h due Friday.
-Expected: Math takes Monday (due first); Physics takes Tuesday and
-Wednesday (4h) and has 1h left over. 6 of 7 hours scheduled = 86%.
+Expected: Math's 2 hours are shared as 40 minutes each day, then a
+break, then Physics for the rest of the block. Physics has 1.75h
+left over, shown to one decimal as 1.8. 5.25 of 7 hours scheduled
+= 75%, shown as 5.2 scheduled and 75% complete.
 """
 
 from datetime import date, timedelta
@@ -36,9 +38,14 @@ def test_days_place_the_work_into_the_saved_study_periods(plan):
     days = plan_view.days_of(plan)
     assert [d.label for d in days] == ["Monday 17 Aug", "Tuesday 18 Aug", "Wednesday 19 Aug"]
     assert [d.iso for d in days] == ["2026-08-17", "2026-08-18", "2026-08-19"]
-    assert [(b.time, b.label, b.is_break) for b in days[0].blocks] == [("4 PM–6 PM", "Math", "no")]
-    assert [(b.time, b.label) for b in days[1].blocks] == [("4 PM–6 PM", "Physics")]
-    assert [(b.time, b.label) for b in days[2].blocks] == [("4 PM–6 PM", "Physics")]
+    shared = [
+        ("4 PM–4:40 PM", "Math", "no"),
+        ("4:40 PM–4:55 PM", "Break", "yes"),
+        ("4:55 PM–6 PM", "Physics", "no"),
+    ]
+    assert [(b.time, b.label, b.is_break) for b in days[0].blocks] == shared
+    assert [(b.time, b.label, b.is_break) for b in days[1].blocks] == shared
+    assert [(b.time, b.label, b.is_break) for b in days[2].blocks] == shared
 
 
 def test_breaks_are_marked_as_breaks():
@@ -51,12 +58,16 @@ def test_breaks_are_marked_as_breaks():
 
 
 def test_today_blocks_use_the_dashboard_row_shape(plan):
-    assert plan_view.today_blocks(plan, MONDAY) == [{"time": "4 PM–6 PM", "label": "Math", "is_break": "no"}]
+    assert plan_view.today_blocks(plan, MONDAY) == [
+        {"time": "4 PM–4:40 PM", "label": "Math", "is_break": "no"},
+        {"time": "4:40 PM–4:55 PM", "label": "Break", "is_break": "yes"},
+        {"time": "4:55 PM–6 PM", "label": "Physics", "is_break": "no"},
+    ]
     assert plan_view.today_blocks(plan, THURSDAY) == []
 
 
 def test_totals_are_the_engines_numbers_as_strings(plan):
-    assert plan_view.totals(plan) == {"required": "7.0", "scheduled": "6.0", "unscheduled": "1.0", "completion": "86"}
+    assert plan_view.totals(plan) == {"required": "7.0", "scheduled": "5.2", "unscheduled": "1.8", "completion": "75"}
 
 
 def test_status_rows_carry_status_percent_and_real_risk(plan):
@@ -67,10 +78,11 @@ def test_status_rows_carry_status_percent_and_real_risk(plan):
     assert math.risk == "LOW"                                 # nothing remaining -> infinite ratio -> LOW
     assert math.subject == "Math"
     assert physics.status == "PARTIAL"
-    assert (physics.scheduled, physics.required, physics.remaining) == ("4.0", "5.0", "1.0")
-    assert physics.percent == 80
-    # 6h of study time exists before Friday, but all of it is on the
-    # schedule (Math 2h, Physics 4h); nothing is free for the 1h left.
+    assert (physics.scheduled, physics.required, physics.remaining) == ("3.2", "5.0", "1.8")
+    assert physics.percent == 65
+    # 6h of study time exists before Friday, and every minute of it is
+    # on the schedule (Math, a break, and Physics each day). Nothing
+    # is free for the 1.75h left.
     assert physics.risk == "CRITICAL"
     assert physics.id == "2" and physics.due == "2026-08-21"
     for r in rows:
